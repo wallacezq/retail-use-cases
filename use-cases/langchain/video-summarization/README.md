@@ -2,7 +2,7 @@
 
 ## Installation
 
-Install Intel Client GPU, Conda, and Set Up Python Enviornment
+Install Intel Client GPU, Conda, and Set Up Python Environment
 
 ```
 # Validated on Ubuntu 24.04 and 22.04
