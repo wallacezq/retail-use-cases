@@ -11,8 +11,7 @@ else
     wget https://github.com/intel-iot-devkit/sample-videos/raw/master/one-by-one-person-detection.mp4
 fi
 
-#INPUT_FILE="one-by-one-person-detection.mp4"
-INPUT_FILE="/home/sanjana/expts/vids/bb_chunk_small.mp4"
+INPUT_FILE="one-by-one-person-detection.mp4"
 DEVICE="GPU"
 RESOLUTION_X=480
 RESOLUTION_Y=270
@@ -35,4 +34,5 @@ APP_PID=$!
 echo "Running Video Summarizer"
 python summarizer/video_summarizer.py $INPUT_FILE /home/sanjana/expts/models/minicpm/MiniCPM_INT4/ -d $DEVICE -r $RESOLUTION_X $RESOLUTION_Y -p "$PROMPT"
 
+# terminate fastapi app after video summarization concludes
 kill $APP_PID
