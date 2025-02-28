@@ -32,7 +32,7 @@ uvicorn api.app:app &
 APP_PID=$!
 
 echo "Running Video Summarizer"
-python summarizer/video_summarizer.py $INPUT_FILE MiniCPM_INT8/ -d $DEVICE -r $RESOLUTION_X $RESOLUTION_Y -p "$PROMPT"
+PYTHONPATH=. python summarizer/video_summarizer.py $INPUT_FILE MiniCPM_INT8/ -d $DEVICE -r $RESOLUTION_X $RESOLUTION_Y -p "$PROMPT"
 
 # terminate fastapi app after video summarization concludes
 kill $APP_PID
