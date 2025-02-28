@@ -2,7 +2,10 @@
 
 ## Installation
 
-Install Intel Client GPU, Conda, and Set Up Python Environment
+1. First, follow the steps on the [MiniCPM-V-2_6 HuggingFace Page](https://huggingface.co/openbmb/MiniCPM-V-2_6) to gain
+access to the model. For more information on user access tokens for access to gated models
+see [here](https://huggingface.co/docs/hub/en/security-tokens).
+2. Next, install Intel Client GPU, Conda, Set Up Python Environment and Create OpenVINO optimized model for MiniCPM
 
 ```
 # Validated on Ubuntu 24.04 and 22.04
@@ -10,7 +13,7 @@ Install Intel Client GPU, Conda, and Set Up Python Environment
 ```
 
 Note: if this script has already been performed and you'd like to re-install the sample project only, the following
-command can be used to skip the re-install of dependencies.
+command can be used to skip the re-install of dependencies. 
 
 ```
 ./install.sh --skip
@@ -18,14 +21,13 @@ command can be used to skip the re-install of dependencies.
 
 ## Convert and Save Optimized MiniCPM-V-2_6
 
-First, follow the steps on the [MiniCPM-V-2_6 HuggingFace Page](https://huggingface.co/openbmb/MiniCPM-V-2_6) to gain
-access to the model. For more information on user access tokens for access to gated models
-see [here](https://huggingface.co/docs/hub/en/security-tokens).
+This section can be skipped if you ran `install.sh` the first time. The `install.sh` script runs this command as part of 
+its setup. This section is to give the user flexibility to tweak the `optimum-cli` command for certain model parameters. 
 
-Next, convert and save the optimized model.
-
+Ensure you are inside the conda environment created for this project. 
 ```
-optimum-cli export openvino -m openbmb/MiniCPM-V-2_6 --trust-remote-code --weight-format int8 MiniCPM_INT8 # int4 also available 
+conda activate ovlangvidsumm
+optimum-cli export openvino -m openbmb/MiniCPM-V-2_6 --trust-remote-code --weight-format int8 MiniCPM_INT8 # int4 also available
 ```
 
 ## Run Video Summarization
