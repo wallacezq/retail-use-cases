@@ -11,6 +11,7 @@ from langchain.prompts import PromptTemplate
 from langchain_community.document_loaders.video import VideoChunkLoader
 
 from ov_lvm_wrapper import OVMiniCPMV26Worker
+from merger.summary_merger import SummaryMerger
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 
