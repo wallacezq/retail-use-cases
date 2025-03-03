@@ -139,13 +139,13 @@ if __name__ == '__main__':
         print(f"Overall Summary: {res['overall_summary']}")
         print(f"Anomaly Score: {res['anomaly_score']}")
 
-    output_handler("\nOverall video summary inference time: {} sec\n".format(time.time() - overall_summ_st_time),
-                   filename=args.outfile, mode="a")
-
     # 2. pass existing minicpm based chain, this does not use the FastAPI route and calls the class functions directly
     # summary_merger = SummaryMerger(chain=chain, device="GPU")
     # ret = summary_merger.merge_summaries(chunk_summaries)
     # print(ret)
+
+    output_handler("\nOverall-Video Summary Inference time: {} sec\n".format(time.time() - overall_summ_st_time),
+                   filename=args.outfile, mode="a")
 
     output_handler("\nTotal Inference time: {} sec\n".format(time.time() - tot_st_time), filename=args.outfile,
                    mode='a')
