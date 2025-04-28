@@ -8,6 +8,7 @@ from itertools import tee
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
+import queue
 
 import requests
 from langchain.prompts import PromptTemplate
@@ -17,6 +18,8 @@ from ov_lvm_wrapper import OVMiniCPMV26Worker
 from vertex_extension import VertexWrapper
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
+
+merge_queue = queue.Queue()
 
 def post_request(input_data):
     formatted_req = {"summaries": input_data}
@@ -38,10 +41,12 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
         with ThreadPoolExecutor() as pool:
             future = pool.submit(post_request, chunk_summaries)
             merge_res = ast.literal_eval(future.result().decode("utf-8"))
-            print("Merge Result", merge_res['overall_summary'])
-            print("Anomaly score from LLM: ", merge_res['anomaly_score'])
-        print("Merge Chunks Time: {} sec\n".format(time.time() - merge_st_time))
-
+            # Populate queue to show merge_summary
+            if merge_res:
+                #print(f"Merge summary: {merge_res['overall_summary']}")
+                merge_queue.put(merge_res['overall_summary'])
+            print("Merge Chunks Time: {} sec\n".format(time.time() - merge_st_time))
+        
         # Extend to cloud, if asked
         if extend_to_vertex and merge_res['anomaly_score'] >= anomaly_thresh:
             print("Sending anomalous clip to Vertex!")
@@ -54,8 +59,6 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
             cloud_response = cloud_model.generate(cloud_prompt,
                                                     video_paths=merged_chunks)
             anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
-
-            # Update the merge res summary and anomaly score with vertex output
             merge_res = {'overall_summary': cloud_response,
                             'anomaly_score': anomaly_score}
             cloud_model.cleanup()
@@ -76,7 +79,6 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
         return None
 
 def summarizer_main(args):
-    print("IN VIDEO_SUMMATIZAER")
     init_st_time = time.time()
 
     # Check video exists
@@ -140,6 +142,8 @@ def summarizer_main(args):
 
         print(f"Chunk Summary Time: {time.time() - chunk_st_time} sec\n")
 
+        #callback(chunk_summary)
+
         call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
         if merge_cadence == float('inf') and not is_last:
@@ -159,7 +163,7 @@ def summarizer_main(args):
             if mode == "w":
                 mode = "a"
             merge_start_time = doc.metadata['end_time'] - args.chunk_overlap
-            chunk_summaries.clear() # what is the risk in clearing here (if we are updating with chunk summaries during merge summary)
+            chunk_summaries.clear()
 
     for t in merge_threads:
         t.join()

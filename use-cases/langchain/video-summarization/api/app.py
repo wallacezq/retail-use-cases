@@ -27,8 +27,7 @@ class SummaryMergerResponse(BaseModel):
 
 
 app = FastAPI()
-summary_merger = SummaryMerger(device="GPU")
-
+summary_merger = SummaryMerger(device="GPU", max_new_tokens=128)
 
 @app.get("/")
 def root():

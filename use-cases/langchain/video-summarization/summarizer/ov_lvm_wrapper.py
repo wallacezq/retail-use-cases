@@ -4,7 +4,10 @@ import openvino_genai
 from decord import VideoReader, cpu
 from langchain.llms.base import LLM
 from openvino import Tensor
+import queue
 
+# Create thread safe queue
+stream_queue = queue.Queue()
 
 def encode_video(video_path: str,
                  max_num_frames: int = 64,
@@ -30,7 +33,7 @@ def encode_video(video_path: str,
     return frames
 
 
-def streamer(subword: str) -> bool:
+def streamer(subword: str)-> bool:
     '''
 
     Args:
@@ -40,10 +43,10 @@ def streamer(subword: str) -> bool:
 
     '''
     print(subword, end='', flush=True)
-
+    #yield subword
+    stream_queue.put(subword)
     # No value is returned as in this example we don't want to stop the generation in this method.
     # "return None" will be treated the same as "return False".
-
 
 class OVMiniCPMV26Wrapper(LLM):
     ovpipe: object
@@ -80,7 +83,6 @@ class OVMiniCPMV26Wrapper(LLM):
                                                   images=frames,
                                                   generation_config=self.generation_config,
                                                   streamer=streamer)
-
         self.ovpipe.finish_chat()
         return str(generated_text)
 
