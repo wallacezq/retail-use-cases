@@ -19,6 +19,7 @@ from vertex_extension import VertexWrapper
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 
+# Create thread safe queue for merge summaries
 merge_queue = queue.Queue()
 
 def post_request(input_data):
@@ -33,47 +34,49 @@ def tag_last(generator):
         yield current, False
     yield next_item, True
 
+merge_lock = threading.Lock()  # Add a threading lock
+
 def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, extend_to_vertex, 
-                       cloud_model, cloud_prompt, anomaly_thresh, last_chunk_processed, loader, doc, mode="w"):
+                       cloud_model, cloud_prompt, anomaly_thresh, loader, doc, mode="w",
+                       processing_chunk_ids=None):
     try:
-        print('\n\nSending Chunks to Merger!\n\n')
-        merge_st_time = time.time()
-        with ThreadPoolExecutor() as pool:
-            future = pool.submit(post_request, chunk_summaries)
-            merge_res = ast.literal_eval(future.result().decode("utf-8"))
-            # Populate queue to show merge_summary
-            if merge_res:
-                #print(f"Merge summary: {merge_res['overall_summary']}")
+        with merge_lock:  # Ensure only one thread accesses the merger at a time
+            print('\n\nSending Chunks to Merger!\n\n')
+            merge_st_time = time.time()
+            with ThreadPoolExecutor() as pool:
+                future = pool.submit(post_request, chunk_summaries)
+                merge_res = ast.literal_eval(future.result().decode("utf-8"))
                 merge_queue.put(merge_res['overall_summary'])
+                print("Updated merge queue with merged summary!\n")
+                print(f"Merge Result from local LLM: {merge_res['overall_summary']}\n")
+                print(f"Anomaly score from LLM: {merge_res['anomaly_score']}\n")
             print("Merge Chunks Time: {} sec\n".format(time.time() - merge_st_time))
-        
-        # Extend to cloud, if asked
-        if extend_to_vertex and merge_res['anomaly_score'] >= anomaly_thresh:
-            print("Sending anomalous clip to Vertex!")
-            cloud_st_time = time.time()
-            chunk_ids_to_process = range(last_chunk_processed,
-                                            doc.metadata['chunk_id'] + 1)
-            merged_chunks = [os.path.join(loader.output_dir,
-                                            "chunk_{}.mp4".format(ch_id))\
-                                for ch_id in chunk_ids_to_process]
-            cloud_response = cloud_model.generate(cloud_prompt,
-                                                    video_paths=merged_chunks)
-            anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
-            merge_res = {'overall_summary': cloud_response,
-                            'anomaly_score': anomaly_score}
-            cloud_model.cleanup()
-            print("Cloud Summary Time: {} sec\n\n".format(time.time() - cloud_st_time))
-            last_chunk_processed = doc.metadata['chunk_id'] + 1
 
+            # Extend to cloud, if asked
+            if extend_to_vertex and merge_res['anomaly_score'] >= anomaly_thresh:
+                print("Sending anomalous clip to Vertex!")
+                cloud_st_time = time.time()
+                
+                # Use processing_chunk_ids to calculate chunks to upload
+                merged_chunks = [os.path.join(loader.output_dir,
+                                              f"chunk_{ch_id}.mp4") for ch_id in processing_chunk_ids]
+                cloud_response = cloud_model.generate(cloud_prompt, video_paths=merged_chunks)
+                anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
 
-        if outfile:
-            merge_res["start_time"] = merge_start_time
-            merge_res["end_time"] = end_time
-            with open(outfile, mode) as FH:
-                json.dump(merge_res, FH, indent=4)
-                FH.write("\n")
+                # Update the merge res summary and anomaly score with vertex output
+                merge_res = {'overall_summary': cloud_response,
+                             'anomaly_score': anomaly_score}
+                cloud_model.cleanup()
+                print("Cloud Summary Time: {} sec\n\n".format(time.time() - cloud_st_time))
 
-        return merge_res
+            if outfile:
+                merge_res["start_time"] = merge_start_time
+                merge_res["end_time"] = end_time
+                with open(outfile, mode) as FH:
+                    json.dump(merge_res, FH, indent=4)
+                    FH.write("\n")
+
+            return merge_res
     except Exception as e:
         print(f"Error during merge: {e}")
         return None
@@ -106,7 +109,11 @@ def summarizer_main(args):
         print('Initializing cloud model instance...')
         cloud_model = VertexWrapper(args.cloud_model)
         cloud_prompt = args.prompt + 'Please analyze all attached videos as if they were combined into a single video. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0'
-    
+    else:
+        print("Not initialzing cloud model instance...")
+        cloud_model = None
+        cloud_prompt = None
+
     # Initialize video chunk loader
     loader = VideoChunkLoader(
         video_path=args.video_file,
@@ -125,7 +132,6 @@ def summarizer_main(args):
     merge_start_time = 0
     merge_threads = []
     all_chunk_outputs = {}
-    last_chunk_processed = 0
 
     tot_inf_st_time = time.time()
 
@@ -136,13 +142,14 @@ def summarizer_main(args):
         output = chain.invoke(inputs)
 
         chunk_key = Path(doc.metadata['chunk_path']).stem
-        chunk_summary = f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}"
+        chunk_summary = {
+            "chunk_id": doc.metadata['chunk_id'],
+            "summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}"
+        }
         chunk_summaries[chunk_key] = chunk_summary
-        all_chunk_outputs[chunk_key] = chunk_summary
+        all_chunk_outputs[chunk_key] = chunk_summary["summary"]
 
         print(f"Chunk Summary Time: {time.time() - chunk_st_time} sec\n")
-
-        #callback(chunk_summary)
 
         call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
@@ -151,11 +158,19 @@ def summarizer_main(args):
 
         if call_merger or (not call_merger and is_last):
             print('\n\nSending Chunks to Merger!\n\n')
+
+            # Create a dictionary without chunk_id for async_merge_chunks
+            chunk_summaries_no_id = {key: value["summary"] for key, value in chunk_summaries.items()}
+
+            # Print chunk_ids being processed
+            processing_chunk_ids = [value["chunk_id"] for value in chunk_summaries.values()]
+            print(f"Processing chunk_ids: {processing_chunk_ids}")
+
             merge_thread = threading.Thread(
                 target=async_merge_chunks,
-                args=(chunk_summaries.copy(), merge_start_time, doc.metadata['end_time'],
+                args=(chunk_summaries_no_id, merge_start_time, doc.metadata['end_time'],
                       args.outfile, args.extend_to_vertex, cloud_model, cloud_prompt,
-                      args.anomaly_thresh, last_chunk_processed, loader, doc, mode)
+                      args.anomaly_thresh, loader, doc, mode, processing_chunk_ids)
             )
             merge_thread.start()
             merge_threads.append(merge_thread)
@@ -163,7 +178,11 @@ def summarizer_main(args):
             if mode == "w":
                 mode = "a"
             merge_start_time = doc.metadata['end_time'] - args.chunk_overlap
-            chunk_summaries.clear()
+
+            # Remove processed chunks from chunk_summaries
+            print(f"Cleaning processed chunk_ids: {processing_chunk_ids}")
+            chunk_summaries = {key: value for key, value in chunk_summaries.items()
+                               if value["chunk_id"] not in processing_chunk_ids}
 
     for t in merge_threads:
         t.join()
@@ -180,13 +199,13 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--prompt", type=str, default="Please summarize this video.")
     parser.add_argument("-d", "--device", type=str, default="CPU")
     parser.add_argument("-t", "--max_new_tokens", type=int, default=256)
-    parser.add_argument("-f", "--max_num_frames", type=int, default=32)
+    parser.add_argument("-f", "--max_num_frames", type=int, default=64)
     parser.add_argument("-c", "--chunk_duration", type=int, default=15)
     parser.add_argument("-v", "--chunk_overlap", type=int, default=2)
     parser.add_argument("-mc", "--merge_cadence", type=int, default=30)
     parser.add_argument("-r", "--resolution", type=int, nargs=2)
     parser.add_argument("-o", "--outfile", type=str, default='')
-    parser.add_argument("-e", "--extend_to_vertex", action="store_true", default=True)
+    parser.add_argument("-e", "--extend_to_vertex", action="store_true", default=False)
     parser.add_argument("-a", "--anomaly_thresh", type=float, default=0.0)
     parser.add_argument("-m", "--cloud_model", type=str, default="gemini-2.0-flash-exp")
     
