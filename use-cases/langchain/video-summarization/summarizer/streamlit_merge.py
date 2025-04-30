@@ -4,62 +4,37 @@ import queue
 import streamlit as st
 import streamlit.components.v1 as components
 import argparse
+from queue import Queue
+
+stream_result_queue = Queue()
+merge_result_queue = Queue()
 
 from ov_lvm_wrapper import stream_queue
 from streamlit_summarizer import summarizer_main, merge_queue
 
-def update_merge_summary_in_session_state(merged_summary):
-    st.session_state['merged_summary'] = merged_summary
-    print("Updated merged summary session state!")
-
 def run_summarization(args):
     summarizer_main(args)
 
-def poll_streaming_results(text_placeholder, stop_signal):
+def poll_streaming_results(stop_signal):
     streamed_text = ""
     while not stop_signal.is_set() or not stream_queue.empty():
         try:
             token = stream_queue.get(timeout=0.1)
             streamed_text += token
-            text_placeholder.markdown(
-                f"""
-                <div id="chunk_scrollable" style='height:400px; overflow-y:auto;'>
-                    <pre>{streamed_text}</pre>
-                </div>
-                <script>
-                    var container = document.getElementById('chunk_scrollable');
-                    container.scrollTop = container.scrollHeight;
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
+            stream_result_queue.put(streamed_text)
         except queue.Empty:
             continue
-    return streamed_text
 
-def poll_merge_results(merge_placeholder, stop_signal):
-    merged_summary = ""
+def poll_merge_results(stop_signal):
+    merge_summary = ""
     while not stop_signal.is_set() or not merge_queue.empty():
         try:
             summary = merge_queue.get(timeout=0.1)
-            print(f"Recieved merged summary: {summary}")
-            merged_summary += summary
-            update_merge_summary_in_session_state(merged_summary)
-            merge_placeholder.markdown(
-                f"""
-                <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
-                    <pre>{merged_summary}</pre>
-                </div>
-                <script>
-                    var container = document.getElementById('merge_scrollable');
-                    container.scrollTop = container.scrollHeight;
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
+            print(f"\n\nRecieved merged summary in poll results: {summary}\n\n")
+            merge_summary += summary
+            merge_result_queue.put(merge_summary)
         except queue.Empty:
             continue
-    return merged_summary
 
 st.title("🎥 Streaming Video Summarizer")
 
@@ -102,31 +77,58 @@ if uploaded_file is not None:
             cloud_model="gemini-2.0-flash-exp"
         )
 
+        chunk_placeholder = st.empty()
         merge_placeholder = st.empty()
-        text_placeholder = st.empty()
 
         # Setup stop signal
         stop_signal = threading.Event()
 
         # Launch inference in background
         summarize_thread = threading.Thread(target=run_summarization, args=(args,))
+        chunk_thread = threading.Thread(target=poll_streaming_results, args=(stop_signal,))
+        merge_thread = threading.Thread(target=poll_merge_results, args=(stop_signal,))
+
         summarize_thread.start()
-
-        # Launch background pollers
-        chunk_thread = threading.Thread(target=poll_streaming_results, args=(text_placeholder, stop_signal))
-        merge_thread = threading.Thread(target=poll_merge_results, args=(merge_placeholder, stop_signal))
-
         chunk_thread.start()
         merge_thread.start()
 
-        # Start polling for stream results
-        poll_streaming_results(text_placeholder, stop_signal)
-        poll_merge_results(merge_placeholder, stop_signal)
+        streamed_text = ""
+        merge_summary = ""
 
-        summarize_thread.join()
+        while summarize_thread.is_alive() or not stop_signal.is_set():
+            while not stream_result_queue.empty():
+                streamed_text = stream_result_queue.get()
+                chunk_placeholder.markdown(
+                    f"""
+                    <div id="scrollable" style='height:400px; overflow-y:auto;'>
+                        <pre>{streamed_text}</pre>
+                    </div>
+                    <script>
+                        var container = document.getElementById('scrollable');
+                        container.scrollTop = container.scrollHeight;
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+            while not merge_result_queue.empty():
+                merge_summary = merge_result_queue.get()
+                merge_placeholder.markdown(
+                    f"""
+                    <div id="scrollable" style='height:400px; overflow-y:auto;'>
+                        <pre>{merge_summary}</pre>
+                    </div>
+                    <script>
+                        var container = document.getElementById('merge_scrollable');
+                        container.scrollTop = container.scrollHeight;
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+            time.sleep(0.1)
+
         stop_signal.set()
-
         chunk_thread.join()
         merge_thread.join()
+        summarize_thread.join()
 
         st.success("Summarization complete!")
