@@ -11,7 +11,7 @@ else
     wget https://github.com/intel-iot-devkit/sample-videos/raw/master/one-by-one-person-detection.mp4
 fi
 
-INPUT_FILE="13min_ace_video.MP4"
+INPUT_FILE="Tripod_angle.mp4"
 DEVICE="GPU.1"
 RESOLUTION_X=480
 RESOLUTION_Y=270
@@ -33,7 +33,7 @@ APP_PID=$!
 sleep 10
 
 echo "Running Video Summarizer"
-PYTHONPATH=. python summarizer/video_summarizer.py $INPUT_FILE MiniCPM_INT8/ -d $DEVICE -r $RESOLUTION_X $RESOLUTION_Y -p "$PROMPT"
+PYTHONPATH=. python summarizer/video_summarizer.py $INPUT_FILE MiniCPM_INT8/ -d $DEVICE -r $RESOLUTION_X $RESOLUTION_Y -p "$PROMPT" -o "output-test.json"
 #streamlit run summarizer/streamlit_merge.py --server.maxUploadSize=10000
 
 # terminate fastapi app after video summarization concludes
