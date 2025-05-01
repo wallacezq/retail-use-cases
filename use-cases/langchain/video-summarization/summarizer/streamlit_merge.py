@@ -36,72 +36,116 @@ def poll_merge_results(stop_signal):
         except queue.Empty:
             continue
 
+st.set_page_config(layout="wide")
+
 st.title("🎥 Streaming Video Summarizer")
 
-uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
+# Initialize session state
+if 'streamed_text' not in st.session_state:
+    st.session_state['streamed_text'] = ''
 
-if uploaded_file is not None:
-    st.video(uploaded_file)
+if 'merged_summary' not in st.session_state:
+    st.session_state['merged_summary'] = ''
 
-    if st.button("Start Summarization"):
-        with open("uploaded_video.mp4", "wb") as f:
-            f.write(uploaded_file.read())
+# Split the page into two columns
+spacer_col, left_col, right_col = st.columns([0.05, 0.65, 0.3])  # Adjust ratio as needed
 
-        args = argparse.Namespace(
-            video_file='uploaded_video.mp4',
-            model_dir='MiniCPM_INT8/',
-            prompt="""
-            As an expert investigator, please analyze this video. Summarize the video, generating an
-            Overall Summary, Activity Observed, and Potential Suspicious Activity. 
-            It should be formmatted as such:
+with left_col:
+    uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
+    if uploaded_file is not None:
+        st.video(uploaded_file)
+        start_button_pressed = st.button("Start Summarization")
 
-            **Overall Summary**
-            Here is a detailed description of the video.
+with left_col:
+    st.markdown("### 📄 Chunk Summaries")
+    chunk_placeholder = st.empty()
+    chunk_placeholder.markdown(
+        f"""
+        <div id="scrollable" style='height:400px; overflow-y:auto;'>
+            <pre>{st.session_state['streamed_text']}</pre>
+        </div>
+        <script>
+            var container = document.getElementById('scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
+            }}
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
-            **Activity Observed**
-            1) Here is a bullet point list of the activities observed. If nothing is observed>
+with right_col:
+    st.markdown("### 🧠 Merged Summaries")
+    merge_placeholder = st.empty()
+    merge_placeholder.markdown(
+        f"""
+        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+            <pre>{st.session_state['merged_summary']}</pre>
+        </div>
+        <script>
+            var container = document.getElementById('merge_scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
+            }}
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
-            **Potential Suspicious Activity**
-            1) Here is a bullet point list of suspicious behavior (if any) to highlight.
-            """,
-            device='GPU.1',
-            max_new_tokens=256,
-            max_num_frames=32,
-            chunk_duration=15,
-            chunk_overlap=2,
-            merge_cadence=30,
-            resolution=[480, 270],
-            outfile='',
-            extend_to_vertex=True,
-            anomaly_thresh=0.5,
-            cloud_model="gemini-2.0-flash-exp"
-        )
+if uploaded_file is not None and start_button_pressed:
+    with open("uploaded_video.mp4", "wb") as f:
+        f.write(uploaded_file.read())
 
-        chunk_placeholder = st.empty()
-        merge_placeholder = st.empty()
+    args = argparse.Namespace(
+        video_file='uploaded_video.mp4',
+        model_dir='MiniCPM_INT8/',
+        prompt="""
+        As an expert investigator, please analyze this video. Summarize the video, generating an
+        Overall Summary, Activity Observed, and Potential Suspicious Activity. 
+        It should be formatted as such:
 
-        # Setup stop signal
-        stop_signal = threading.Event()
+        **Overall Summary**
+        Here is a detailed description of the video.
 
-        # Launch inference in background
-        summarize_thread = threading.Thread(target=run_summarization, args=(args,))
-        chunk_thread = threading.Thread(target=poll_streaming_results, args=(stop_signal,))
-        merge_thread = threading.Thread(target=poll_merge_results, args=(stop_signal,))
+        **Activity Observed**
+        1) Here is a bullet point list of the activities observed.
 
-        summarize_thread.start()
-        chunk_thread.start()
-        merge_thread.start()
+        **Potential Suspicious Activity**
+        1) Here is a bullet point list of suspicious behavior (if any) to highlight.
+        """,
+        device='GPU.1',
+        max_new_tokens=256,
+        max_num_frames=64,
+        chunk_duration=15,
+        chunk_overlap=2,
+        merge_cadence=30,
+        resolution=[480, 270],
+        outfile='',
+        extend_to_vertex=True,
+        anomaly_thresh=0.5,
+        cloud_model="gemini-2.0-flash-exp"
+    )
 
-        streamed_text = ""
-        merge_summary = ""
+    stop_signal = threading.Event()
+    summarize_thread = threading.Thread(target=run_summarization, args=(args,))
+    summarize_thread.start()
 
-        while summarize_thread.is_alive() or not stop_signal.is_set():
-            while not stream_result_queue.empty():
-                streamed_text = stream_result_queue.get()
+    # Define these before the loop
+    chunk_duration = args.chunk_duration
+    chunk_overlap = args.chunk_overlap
+    chunk_index = 0
+    current_time = 0
+    chunk_summaries = []
+
+    while summarize_thread.is_alive() or not stream_queue.empty() or not merge_queue.empty():
+        try:
+            if not stream_queue.empty():
+                token = stream_queue.get(timeout=0.1)
+                st.session_state['streamed_text'] += token
                 chunk_placeholder.markdown(
                     f"""
                     <div id="scrollable" style='height:400px; overflow-y:auto;'>
-                        <pre>{streamed_text}</pre>
+                        <pre>{st.session_state['streamed_text']}</pre>
                     </div>
                     <script>
                         var container = document.getElementById('scrollable');
@@ -110,12 +154,17 @@ if uploaded_file is not None:
                     """,
                     unsafe_allow_html=True
                 )
-            while not merge_result_queue.empty():
-                merge_summary = merge_result_queue.get()
+        except queue.Empty:
+            pass
+
+        try:
+            if not merge_queue.empty():
+                summary = merge_queue.get(timeout=0.1)
+                st.session_state['merged_summary'] += summary
                 merge_placeholder.markdown(
                     f"""
-                    <div id="scrollable" style='height:400px; overflow-y:auto;'>
-                        <pre>{merge_summary}</pre>
+                    <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+                        <pre>{st.session_state['merged_summary']}</pre>
                     </div>
                     <script>
                         var container = document.getElementById('merge_scrollable');
@@ -124,11 +173,10 @@ if uploaded_file is not None:
                     """,
                     unsafe_allow_html=True
                 )
-            time.sleep(0.1)
+        except queue.Empty:
+            pass
 
-        stop_signal.set()
-        chunk_thread.join()
-        merge_thread.join()
-        summarize_thread.join()
+    summarize_thread.join()
+    stop_signal.set()
+    st.success("Summarization complete!")
 
-        st.success("Summarization complete!")
