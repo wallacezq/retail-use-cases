@@ -5,6 +5,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import argparse
 from queue import Queue
+import re
 
 stream_result_queue = Queue()
 merge_result_queue = Queue()
@@ -79,7 +80,7 @@ with right_col:
     merge_placeholder = st.empty()
     merge_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+        <div id="merge_scrollable" style='height:800px; overflow-y:auto;'>
             <pre>{st.session_state['merged_summary']}</pre>
         </div>
         <script>
@@ -104,13 +105,13 @@ if uploaded_file is not None and start_button_pressed:
         Overall Summary, Activity Observed, and Potential Suspicious Activity. 
         It should be formatted as such:
 
-        **Overall Summary**
+        Overall Summary
         Here is a detailed description of the video.
 
-        **Activity Observed**
+        Activity Observed
         1) Here is a bullet point list of the activities observed.
 
-        **Potential Suspicious Activity**
+        Potential Suspicious Activity
         1) Here is a bullet point list of suspicious behavior (if any) to highlight.
         """,
         device='GPU.1',
@@ -142,10 +143,11 @@ if uploaded_file is not None and start_button_pressed:
             if not stream_queue.empty():
                 token = stream_queue.get(timeout=0.1)
                 st.session_state['streamed_text'] += token
+                safe_text = (st.session_state['streamed_text'].replace('\n', '<br>').replace('[CHUNK ', '<br><strong>[CHUNK ').replace('sec]', 'sec]</strong>'))
                 chunk_placeholder.markdown(
                     f"""
                     <div id="scrollable" style='height:400px; overflow-y:auto;'>
-                        <pre>{st.session_state['streamed_text']}</pre>
+                       <div style="white-space: pre-wrap;">{safe_text}</div>
                     </div>
                     <script>
                         var container = document.getElementById('scrollable');
@@ -161,10 +163,11 @@ if uploaded_file is not None and start_button_pressed:
             if not merge_queue.empty():
                 summary = merge_queue.get(timeout=0.1)
                 st.session_state['merged_summary'] += summary
+                safe_merged_text = (st.session_state['merged_summary'].replace('\n', '<br>').replace('[MERGED SUMMARY ', '<br><strong>[MERGED SUMMARY ').replace('sec]', 'sec]</strong>'))
                 merge_placeholder.markdown(
                     f"""
-                    <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
-                        <pre>{st.session_state['merged_summary']}</pre>
+                    <div id="merge_scrollable" style='height:800px; overflow-y:auto;'>
+                        <div style="white-space: pre-wrap;">{safe_merged_text}</div>
                     </div>
                     <script>
                         var container = document.getElementById('merge_scrollable');
