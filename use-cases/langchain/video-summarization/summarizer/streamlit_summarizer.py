@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 import queue
+import re
 
 import requests
 from langchain.prompts import PromptTemplate
@@ -39,6 +40,8 @@ merge_lock = threading.Lock()  # Add a threading lock
 def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, extend_to_vertex, 
                        cloud_model, cloud_prompt, anomaly_thresh, loader, doc, mode="w",
                        processing_chunk_ids=None):
+    #print(f"\n\nChunk summaries in async merge: {chunk_summaries}\n\n")
+    #print(f"Merge start and end time: {merge_start_time}, {end_time}")
     try:
         with merge_lock:  # Ensure only one thread accesses the merger at a time
             print('\n\nSending Chunks to Merger!\n\n')
@@ -46,8 +49,22 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
             with ThreadPoolExecutor() as pool:
                 future = pool.submit(post_request, chunk_summaries)
                 merge_res = ast.literal_eval(future.result().decode("utf-8"))
-                merge_queue.put(merge_res['overall_summary'])
-                print("Updated merge queue with merged summary!\n")
+                #merge_queue.put(merge_res['overall_summary'])
+                merge_output = f"[MERGED SUMMARY {merge_start_time}-{end_time}sec]\n{merge_res['overall_summary']}\n\nAnomaly score from LLM: {merge_res['anomaly_score']}\n\n"
+                anomaly_match = re.search(r"Anomaly score from LLM:\s*([0-9.]+)", merge_output)
+                color = ""
+                if anomaly_match:
+                    score = float(anomaly_match.group(1))
+                    if score < 0.3:
+                        color = "green"
+                    elif score < 0.7:
+                        color = "orange"
+                    else:
+                        color = "red"
+                    styled_scoreline = f'<span style="color:{color}">Anomaly score from LLM: {score}</span>'
+                    merge_output = re.sub("Anomaly score from LLM:\s*([0-9.]+)", styled_scoreline, merge_output)
+                merge_queue.put(merge_output)
+                print(f"Updated merge queue with merged summary: {merge_output}\n")
                 print(f"Merge Result from local LLM: {merge_res['overall_summary']}\n")
                 print(f"Anomaly score from LLM: {merge_res['anomaly_score']}\n")
             print("Merge Chunks Time: {} sec\n".format(time.time() - merge_st_time))

@@ -49,7 +49,7 @@ if 'merged_summary' not in st.session_state:
     st.session_state['merged_summary'] = ''
 
 # Split the page into two columns
-spacer_col, left_col, right_col = st.columns([0.05, 0.65, 0.3])  # Adjust ratio as needed
+spacer_col, left_col, right_col = st.columns([0.05, 0.55, 0.4])  # Adjust ratio as needed
 
 with left_col:
     uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])

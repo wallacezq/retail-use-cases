@@ -5,9 +5,24 @@ from decord import VideoReader, cpu
 from langchain.llms.base import LLM
 from openvino import Tensor
 import queue
+import time
+import threading
 
 # Create thread safe queue
 stream_queue = queue.Queue()
+
+# Create shared state variables for tracking chunk_id
+last_token_time = None
+chunk_id = 0
+chunk_lock = threading.Lock()
+new_chunk_flag = False
+generation_started = False
+is_first_token = True
+append_newline = False
+chunk_start = 0
+chunk_duration = 15
+chunk_overlap = 2
+chunk_end = chunk_duration
 
 def encode_video(video_path: str,
                  max_num_frames: int = 64,
@@ -32,8 +47,27 @@ def encode_video(video_path: str,
     print('Num frames sampled:', len(frames))
     return frames
 
+def chunk_watcher():
+    global last_token_time, chunk_id, new_chunk_flag, generation_started, append_newline
+    global chunk_start, chunk_end, chunk_duration, chunk_overlap
+    while True:
+        time.sleep(0.5)
+        with chunk_lock:
+            if generation_started and last_token_time is not None:
+                if time.time() - last_token_time > 2.0:
+                    append_newline = True
+                    chunk_id += 1
+                    new_chunk_flag = True
+                    last_token_time = None
+                    chunk_start = max(0, chunk_end - chunk_overlap)
+                    chunk_end = chunk_start + chunk_duration
+
+# Start watcher thread once at beggining of app
+watcher_thread = threading.Thread(target=chunk_watcher, daemon=True)
+watcher_thread.start()
 
 def streamer(subword: str)-> bool:
+    global last_token_time, new_chunk_flag, generation_started, chunk_id, is_first_token, append_newline
     '''
 
     Args:
@@ -42,9 +76,31 @@ def streamer(subword: str)-> bool:
     Returns: Return flag corresponds whether generation should be stopped.
 
     '''
-    print(subword, end='', flush=True)
-    #yield subword
-    stream_queue.put(subword)
+    with chunk_lock:
+        generation_started = True
+        if chunk_id == 0:
+            chunk_id = 1
+
+        if is_first_token:
+            new_chunk_flag = True
+            is_first_token = False
+
+        if new_chunk_flag:
+            #chunk_id += 1
+            new_chunk_flag = False
+            timestamp = f"[{chunk_start}-{chunk_end}sec]"
+            curr_token = f"[CHUNK {chunk_id}] {timestamp}\n{subword}"
+            
+        else:
+            curr_token = subword
+        
+        if append_newline:
+            stream_queue.put("\n\n")
+            append_newline = False
+    
+        last_token_time = time.time()
+    print(curr_token, end='', flush=True)
+    stream_queue.put(curr_token)
     # No value is returned as in this example we don't want to stop the generation in this method.
     # "return None" will be treated the same as "return False".
 
@@ -84,6 +140,7 @@ class OVMiniCPMV26Wrapper(LLM):
                                                   generation_config=self.generation_config,
                                                   streamer=streamer)
         self.ovpipe.finish_chat()
+        #stream_queue.put("\n")
         return str(generated_text)
 
 
