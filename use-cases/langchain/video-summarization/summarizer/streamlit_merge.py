@@ -6,6 +6,7 @@ import streamlit.components.v1 as components
 import argparse
 from queue import Queue
 import re
+import os
 
 stream_result_queue = Queue()
 merge_result_queue = Queue()
@@ -51,18 +52,25 @@ if 'merged_summary' not in st.session_state:
 # Split the page into two columns
 spacer_col, left_col, right_col = st.columns([0.05, 0.55, 0.4])  # Adjust ratio as needed
 
-with left_col:
-    uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
-    if uploaded_file is not None:
-        st.video(uploaded_file)
-        start_button_pressed = st.button("Start Summarization")
+video_path = 'one-by-one-person-detection.mp4'
 
 with left_col:
+    #uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
+    #if uploaded_file is not None:
+    #    st.video(uploaded_file)
+    #    start_button_pressed = st.button("Start Summarization")
+    if os.path.exists(video_path):
+        st.video(video_path)
+    else:
+        st.warning("The video file cannot be found")
+    start_button_pressed = st.button("Start Summarization")
+
+with right_col:
     st.markdown("### 📄 Chunk Summaries")
     chunk_placeholder = st.empty()
     chunk_placeholder.markdown(
         f"""
-        <div id="scrollable" style='height:400px; overflow-y:auto;'>
+        <div id="scrollable" style='height:500px; overflow-y:auto;'>
             <pre>{st.session_state['streamed_text']}</pre>
         </div>
         <script>
@@ -75,12 +83,12 @@ with left_col:
         unsafe_allow_html=True
     )
 
-with right_col:
+with left_col:
     st.markdown("### 🧠 Merged Summaries")
     merge_placeholder = st.empty()
     merge_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:800px; overflow-y:auto;'>
+        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
             <pre>{st.session_state['merged_summary']}</pre>
         </div>
         <script>
@@ -93,12 +101,9 @@ with right_col:
         unsafe_allow_html=True
     )
 
-if uploaded_file is not None and start_button_pressed:
-    with open("uploaded_video.mp4", "wb") as f:
-        f.write(uploaded_file.read())
-
+if start_button_pressed:
     args = argparse.Namespace(
-        video_file='uploaded_video.mp4',
+        video_file='one-by-one-person-detection.mp4',
         model_dir='MiniCPM_INT8/',
         prompt="""
         As an expert investigator, please analyze this video. Summarize the video, generating an
@@ -146,7 +151,7 @@ if uploaded_file is not None and start_button_pressed:
                 safe_text = (st.session_state['streamed_text'].replace('\n', '<br>').replace('[CHUNK ', '<br><strong>[CHUNK ').replace('sec]', 'sec]</strong>'))
                 chunk_placeholder.markdown(
                     f"""
-                    <div id="scrollable" style='height:400px; overflow-y:auto;'>
+                    <div id="scrollable" style='height:500px; overflow-y:auto;'>
                        <div style="white-space: pre-wrap;">{safe_text}</div>
                     </div>
                     <script>
@@ -166,7 +171,7 @@ if uploaded_file is not None and start_button_pressed:
                 safe_merged_text = (st.session_state['merged_summary'].replace('\n', '<br>').replace('[MERGED SUMMARY ', '<br><strong>[MERGED SUMMARY ').replace('sec]', 'sec]</strong>'))
                 merge_placeholder.markdown(
                     f"""
-                    <div id="merge_scrollable" style='height:800px; overflow-y:auto;'>
+                    <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
                         <div style="white-space: pre-wrap;">{safe_merged_text}</div>
                     </div>
                     <script>
