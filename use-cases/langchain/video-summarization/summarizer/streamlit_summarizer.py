@@ -47,7 +47,6 @@ def ingest_into_milvus(ingest_q):
         if chunk_summaries:
             formatted_req = {
                 "data": chunk_summaries
-
             }
 
             # print(formatted_req)
@@ -55,7 +54,7 @@ def ingest_into_milvus(ingest_q):
             try:
                 response = requests.post(url="http://127.0.0.1:8000/embed_txt_and_store", json=formatted_req)
                 if response.status_code != 200:
-                    print(f"Milvus: Error: {response.status_code}, {response.content}")
+                    print(f"Milvus: Error in ingest_into_milvus: {response.status_code}, {response.content}")
 
                 milvus_res = response.json()
                 print(
@@ -65,10 +64,10 @@ def ingest_into_milvus(ingest_q):
                 print(f"Milvus: Request failed: {e}")
 
         else:
-            continue
-            #print("Milvus: Waiting for chunk summaries to ingest")
+            #continue
+            print("Milvus: Waiting for chunk summaries to ingest")
 
-        #time.sleep(10)
+        time.sleep(10)
 
 def tag_last(generator):
     gen1, gen2 = tee(generator)
@@ -227,7 +226,7 @@ def summarizer_main(args):
 
                 }
             )
-            print(f"Milvus ingested chunk: {doc.metadata['chunk_id']}")
+            #print(f"Milvus ingested chunk: {doc.metadata['chunk_id']}")
 
             call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
