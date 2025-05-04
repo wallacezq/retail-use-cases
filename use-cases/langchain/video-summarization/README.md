@@ -1,8 +1,15 @@
 # Summarize Videos Using OpenVINO-GenAI, Langchain, and MiniCPM-V-2_6
 
+## Setup Milvus as a standalone Docker container
+```
+chmod +x ./milvus/setup.sh
+./milvus/setup.sh
+```
+Verify the service is running using `docker ps`
+
 ## Installation
 
-1. First, follow the steps on the [MiniCPM-V-2_6 HuggingFace Page](https://huggingface.co/openbmb/MiniCPM-V-2_6) to gain
+1. Then, follow the steps on the [MiniCPM-V-2_6 HuggingFace Page](https://huggingface.co/openbmb/MiniCPM-V-2_6) to gain
 access to the model. For more information on user access tokens for access to gated models
 see [here](https://huggingface.co/docs/hub/en/security-tokens).
 2. Next, install Intel Client GPU, Conda, Set Up Python Environment and Create OpenVINO optimized model for MiniCPM

@@ -10,6 +10,7 @@ from pathlib import Path
 import threading
 import queue
 import re
+import uuid
 
 import requests
 from langchain.prompts import PromptTemplate
@@ -27,6 +28,47 @@ def post_request(input_data):
     formatted_req = {"summaries": input_data}
     response = requests.post(url="http://127.0.0.1:8000/merge_summaries", json=formatted_req)
     return response.content
+
+def ingest_into_milvus(ingest_q):
+    while True:
+        chunk_summaries = []
+        end_ingestion = False
+        while not ingest_q.empty():
+            item = ingest_q.get()
+            if item == "END":
+                end_ingestion = True
+                ingest_q.task_done()
+                break
+            chunk_summaries.append(item)
+
+        if end_ingestion:
+            break
+
+        if chunk_summaries:
+            formatted_req = {
+                "data": chunk_summaries
+
+            }
+
+            # print(formatted_req)
+            print(f"Milvus: Ingesting {len(chunk_summaries)} chunk summaries into Milvus")
+            try:
+                response = requests.post(url="http://127.0.0.1:8000/embed_txt_and_store", json=formatted_req)
+                if response.status_code != 200:
+                    print(f"Milvus: Error: {response.status_code}, {response.content}")
+
+                milvus_res = response.json()
+                print(
+                    f"Milvus: Chunk Summaries Ingested into Milvus: {milvus_res['status']}, Total chunks: {milvus_res['total_chunks']}")
+
+            except requests.exceptions.RequestException as e:
+                print(f"Milvus: Request failed: {e}")
+
+        else:
+            continue
+            #print("Milvus: Waiting for chunk summaries to ingest")
+
+        #time.sleep(10)
 
 def tag_last(generator):
     gen1, gen2 = tee(generator)
@@ -149,60 +191,83 @@ def summarizer_main(args):
     merge_start_time = 0
     merge_threads = []
     all_chunk_outputs = {}
+    ingest_queue = queue.Queue()
 
-    tot_inf_st_time = time.time()
+    print("Main: Starting chunk summary ingestion into Milvus")
 
-    for doc, is_last in tag_last(loader.lazy_load()):
-        chunk_st_time = time.time()
-        video_name = Path(doc.metadata['chunk_path'])
-        inputs = {"video": video_name, "question": args.prompt}
-        output = chain.invoke(inputs)
+    # Ingest chunk summaries into the running Milvus instance
+    with ThreadPoolExecutor() as pool:
+        milvus_future = pool.submit(ingest_into_milvus, ingest_queue)    
 
-        chunk_key = Path(doc.metadata['chunk_path']).stem
-        chunk_summary = {
-            "chunk_id": doc.metadata['chunk_id'],
-            "summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}"
-        }
-        chunk_summaries[chunk_key] = chunk_summary
-        all_chunk_outputs[chunk_key] = chunk_summary["summary"]
+        tot_inf_st_time = time.time()
 
-        print(f"Chunk Summary Time: {time.time() - chunk_st_time} sec\n")
+        for doc, is_last in tag_last(loader.lazy_load()):
+            chunk_st_time = time.time()
+            video_name = Path(doc.metadata['chunk_path'])
+            inputs = {"video": video_name, "question": args.prompt}
+            output = chain.invoke(inputs)
 
-        call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
+            chunk_key = Path(doc.metadata['chunk_path']).stem
+            chunk_summary = {
+                "chunk_id": doc.metadata['chunk_id'],
+                "summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}"
+            }
+            chunk_summaries[chunk_key] = chunk_summary
+            all_chunk_outputs[chunk_key] = chunk_summary["summary"]
 
-        if merge_cadence == float('inf') and not is_last:
-            continue
+            print(f"Chunk Summary Time: {time.time() - chunk_st_time} sec\n")
 
-        if call_merger or (not call_merger and is_last):
-            print('\n\nSending Chunks to Merger!\n\n')
+            ingest_queue.put(
+                {
+                    "chunk_id": f"{doc.metadata['chunk_id']}_{uuid.uuid4()}",
+                    "chunk_path": doc.metadata['chunk_path'],
+                    "chunk_summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}",
+                    "start_time": f"{doc.metadata['start_time']}",
+                    "end_time": f"{doc.metadata['end_time']}"
 
-            # Create a dictionary without chunk_id for async_merge_chunks
-            chunk_summaries_no_id = {key: value["summary"] for key, value in chunk_summaries.items()}
-
-            # Print chunk_ids being processed
-            processing_chunk_ids = [value["chunk_id"] for value in chunk_summaries.values()]
-            print(f"Processing chunk_ids: {processing_chunk_ids}")
-
-            merge_thread = threading.Thread(
-                target=async_merge_chunks,
-                args=(chunk_summaries_no_id, merge_start_time, doc.metadata['end_time'],
-                      args.outfile, args.extend_to_vertex, cloud_model, cloud_prompt,
-                      args.anomaly_thresh, loader, doc, mode, processing_chunk_ids)
+                }
             )
-            merge_thread.start()
-            merge_threads.append(merge_thread)
+            print(f"Milvus ingested chunk: {doc.metadata['chunk_id']}")
 
-            if mode == "w":
-                mode = "a"
-            merge_start_time = doc.metadata['end_time'] - args.chunk_overlap
+            call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
-            # Remove processed chunks from chunk_summaries
-            print(f"Cleaning processed chunk_ids: {processing_chunk_ids}")
-            chunk_summaries = {key: value for key, value in chunk_summaries.items()
-                               if value["chunk_id"] not in processing_chunk_ids}
+            if merge_cadence == float('inf') and not is_last:
+                continue
+
+            if call_merger or (not call_merger and is_last):
+                print('\n\nSending Chunks to Merger!\n\n')
+
+                # Create a dictionary without chunk_id for async_merge_chunks
+                chunk_summaries_no_id = {key: value["summary"] for key, value in chunk_summaries.items()}
+
+                # Print chunk_ids being processed
+                processing_chunk_ids = [value["chunk_id"] for value in chunk_summaries.values()]
+                print(f"Processing chunk_ids: {processing_chunk_ids}")
+
+                merge_thread = threading.Thread(
+                    target=async_merge_chunks,
+                    args=(chunk_summaries_no_id, merge_start_time, doc.metadata['end_time'],
+                        args.outfile, args.extend_to_vertex, cloud_model, cloud_prompt,
+                        args.anomaly_thresh, loader, doc, mode, processing_chunk_ids)
+                )
+                merge_thread.start()
+                merge_threads.append(merge_thread)
+
+                if mode == "w":
+                    mode = "a"
+                merge_start_time = doc.metadata['end_time'] - args.chunk_overlap
+
+                # Remove processed chunks from chunk_summaries
+                print(f"Cleaning processed chunk_ids: {processing_chunk_ids}")
+                chunk_summaries = {key: value for key, value in chunk_summaries.items()
+                                if value["chunk_id"] not in processing_chunk_ids}
 
     for t in merge_threads:
         t.join()
+
+    while not ingest_queue.empty():
+        time.sleep(0.5)
+    ingest_queue.put("END")
 
     print("\nTotal Inference Time: {} sec\n".format(time.time() - tot_inf_st_time))
 
