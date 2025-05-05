@@ -7,7 +7,19 @@ chmod +x ./milvus/setup.sh
 ```
 Verify the service is running using `docker ps`
 
-## Installation
+## Setup gcloud instance
+Follow [link](https://cloud.google.com/sdk/docs/install) to create google cloud account and install gcloud.
+
+Next, login and authenticate your account
+```
+# Initialize gcloud and create login credentials. Tip: Save path to .json credential file.
+gcloud init
+
+# Use credentials to login and authorize account
+gcloud auth application-default login 
+```
+
+## Convert and Save Optimized MiniCPM
 
 1. Then, follow the steps on the [MiniCPM-V-2_6 HuggingFace Page](https://huggingface.co/openbmb/MiniCPM-V-2_6) to gain
 access to the model. For more information on user access tokens for access to gated models
@@ -15,7 +27,7 @@ see [here](https://huggingface.co/docs/hub/en/security-tokens).
 2. Next, install Intel Client GPU, Conda, Set Up Python Environment and Create OpenVINO optimized model for MiniCPM
 
 ```
-# Validated on Ubuntu 24.04 and 22.04
+# Installation (Validated on Ubuntu 24.04 and 22.04)
 ./install.sh
 ```
 

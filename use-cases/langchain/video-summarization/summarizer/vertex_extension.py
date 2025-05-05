@@ -46,11 +46,13 @@ class VertexWrapper(object):
             self.bucket_name = create_gc_bucket(bucket_name)
         elif len(available_buckets) > 0 and not bucket_name:
             self.bucket_name = available_buckets[0]
+            #print(f"Bucket name: {self.bucket_name}")
         elif bucket_name in available_buckets:
             self.bucket_name = bucket_name
         else:
             self.bucket_name = create_gc_bucket(bucket_name)
-            
+        print(f"Bucket name: {self.bucket_name}")
+
     def generate(self, text_prompt, video_paths=None):
         if video_paths:
             parts = [text_prompt]

@@ -1,6 +1,7 @@
 import streamlit as st
 import ast
 from rag import search_in_milvus
+import re
 
 def play_video(video_path, offset):
     video_file = open(video_path, 'rb') 
@@ -33,17 +34,31 @@ if st.button("Search"):
             start_time = results["results"][0]["start_time"]
 
             with col2:
-                st.markdown("Textual Summary")
-                st.text_area(f"Summary of this segment: {chunk_summary}", height=300)
+                st.markdown("## Textual Summary")
+                safe_summary = re.sub(
+                    r"(Start time:\s*\d+\s*End time:\s*\d+)",
+                    r"<strong>\1</strong>",
+                    chunk_summary
+                )
+                safe_summary = safe_summary.replace('\n', '<br>')
+                summary_placeholder = st.empty()
+                summary_placeholder.markdown(
+                    f"""
+                    <div id="scrollable" style='height:500px; overflow-y:auto;'>
+                       <div style="white-space: pre-wrap;">{safe_summary}</div>
+                    </div>
+                    <script>
+                        var container = document.getElementById('scrollable');
+                        container.scrollTop = container.scrollHeight;
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+                #st.text_area(f"Summary of this segment:\n{chunk_summary}", height=300)
             with col1:
                 if video_file:
                     st.markdown("Video playback")
                     play_video(video_file, start_time)
-
-            #print(f"\n\nSTART TIME: {start_time}\n\n")
-            #st.write(results)
-            #start_time = results["results"][0]["start_time"]
-            #print(f"\n\nStart time offset: {start_time}\n\n")
 
         except Exception as e:
             st.error(f"Failed to parse response: {e}")

@@ -24,6 +24,10 @@ os.environ["no_proxy"] = "localhost,127.0.0.1"
 # Create thread safe queue for merge summaries
 merge_queue = queue.Queue()
 
+# Create thread safe queue for vertex summaries
+vertex_queue = queue.Queue()
+vertex_score = queue.Queue()
+
 def post_request(input_data):
     formatted_req = {"summaries": input_data}
     response = requests.post(url="http://127.0.0.1:8000/merge_summaries", json=formatted_req)
@@ -81,8 +85,6 @@ merge_lock = threading.Lock()  # Add a threading lock
 def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, extend_to_vertex, 
                        cloud_model, cloud_prompt, anomaly_thresh, loader, doc, mode="w",
                        processing_chunk_ids=None):
-    #print(f"\n\nChunk summaries in async merge: {chunk_summaries}\n\n")
-    #print(f"Merge start and end time: {merge_start_time}, {end_time}")
     try:
         with merge_lock:  # Ensure only one thread accesses the merger at a time
             print('\n\nSending Chunks to Merger!\n\n')
@@ -90,7 +92,6 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
             with ThreadPoolExecutor() as pool:
                 future = pool.submit(post_request, chunk_summaries)
                 merge_res = ast.literal_eval(future.result().decode("utf-8"))
-                #merge_queue.put(merge_res['overall_summary'])
                 merge_output = f"[MERGED SUMMARY {merge_start_time}-{end_time}sec]\n{merge_res['overall_summary']}\n\nAnomaly score from LLM: {merge_res['anomaly_score']}\n\n"
                 anomaly_match = re.search(r"Anomaly score from LLM:\s*([0-9.]+)", merge_output)
                 color = ""
@@ -118,12 +119,29 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                 # Use processing_chunk_ids to calculate chunks to upload
                 merged_chunks = [os.path.join(loader.output_dir,
                                               f"chunk_{ch_id}.mp4") for ch_id in processing_chunk_ids]
+                print("Created merged chunks!")
                 cloud_response = cloud_model.generate(cloud_prompt, video_paths=merged_chunks)
+                #print(f"\n\Generation from cloud model: {cloud_response}\n\n")
                 anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
 
                 # Update the merge res summary and anomaly score with vertex output
                 merge_res = {'overall_summary': cloud_response,
                              'anomaly_score': anomaly_score}
+                color = ""
+                if anomaly_score < 0.3:
+                    color = "green"
+                elif anomaly_score < 0.7:
+                    color = "orange"
+                else:
+                    color = "red"
+                styled_scoreline = f'<span style="color:{color}">Anomaly score from gemini: {anomaly_score}</span>'
+                match = re.search(r"\*?\*?Anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", cloud_response, re.DOTALL)
+                if match:    
+                    print("Anomaly line detected from regex!!\n\n\n")
+                    sys.exit()
+                    cloud_response = re.sub(r"\*?\*?anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", styled_scoreline, cloud_response)
+                cloud_response = f"[CLOUD SUMMARY {merge_start_time}-{end_time}sec]\n{cloud_response}\n\n"
+                vertex_queue.put(cloud_response)
                 cloud_model.cleanup()
                 print("Cloud Summary Time: {} sec\n\n".format(time.time() - cloud_st_time))
 
@@ -286,7 +304,7 @@ if __name__ == '__main__':
     parser.add_argument("-mc", "--merge_cadence", type=int, default=30)
     parser.add_argument("-r", "--resolution", type=int, nargs=2)
     parser.add_argument("-o", "--outfile", type=str, default='')
-    parser.add_argument("-e", "--extend_to_vertex", action="store_true", default=False)
+    parser.add_argument("-e", "--extend_to_vertex", action="store_true", default=True)
     parser.add_argument("-a", "--anomaly_thresh", type=float, default=0.0)
     parser.add_argument("-m", "--cloud_model", type=str, default="gemini-2.0-flash-exp")
     
