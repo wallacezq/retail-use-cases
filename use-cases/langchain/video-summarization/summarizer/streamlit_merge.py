@@ -2,7 +2,7 @@ import threading
 import time
 import queue
 import streamlit as st
-import streamlit.components.v1 as components
+from streamlit.components.v1 import html
 import argparse
 from queue import Queue
 import re
@@ -12,10 +12,39 @@ stream_result_queue = Queue()
 merge_result_queue = Queue()
 
 from ov_lvm_wrapper import stream_queue
-from streamlit_summarizer import summarizer_main, merge_queue
+from streamlit_summarizer import summarizer_main, merge_queue, vertex_queue
 
 def run_summarization(args):
     summarizer_main(args)
+
+# def create_autoscroll_text(content, element_id, height="500px"):
+#     return f"""
+#     <div id="{element_id}" style='height:{height}; overflow-y:auto;'>
+#         <div style="white-space: pre-wrap">
+#     </div>
+#     <script>
+#     function scrollToBottom() {{
+#         const element = document.getElementByID('{element_id}');
+#         if (element) {{
+#             element.scrollTop = element.scrollHeight;
+#         }}
+#     }}
+
+#     scrollToBottom();
+#     const targetNode = document.getElementById('{element_id}');
+#     const config = {{ childList: true, subtree: true}};
+
+#     const observer = new MutationObserver(callback);
+
+#     if (targetNode) {{
+#         observer.observe(targetNode, config);
+#     }}
+#     </script>
+#     """
+    
+#     html_content
+
+
 
 def poll_streaming_results(stop_signal):
     streamed_text = ""
@@ -40,7 +69,7 @@ def poll_merge_results(stop_signal):
 
 st.set_page_config(layout="wide")
 
-st.title("🎥 Streaming Video Summarizer")
+st.title("🎥 Loss Prevention Video Summarization")
 
 # Initialize session state
 if 'streamed_text' not in st.session_state:
@@ -49,16 +78,15 @@ if 'streamed_text' not in st.session_state:
 if 'merged_summary' not in st.session_state:
     st.session_state['merged_summary'] = ''
 
+if 'vertex_summary' not in st.session_state:
+    st.session_state['vertex_summary'] = ''
+
 # Split the page into two columns
 spacer_col, left_col, right_col = st.columns([0.05, 0.55, 0.4])  # Adjust ratio as needed
 
 video_path = 'one-by-one-person-detection.mp4'
 
 with left_col:
-    #uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
-    #if uploaded_file is not None:
-    #    st.video(uploaded_file)
-    #    start_button_pressed = st.button("Start Summarization")
     if os.path.exists(video_path):
         st.video(video_path)
     else:
@@ -70,11 +98,27 @@ with right_col:
     chunk_placeholder = st.empty()
     chunk_placeholder.markdown(
         f"""
-        <div id="scrollable" style='height:500px; overflow-y:auto;'>
+        <div id="scrollable" style='height:600px; overflow-y:auto;'>
             <pre>{st.session_state['streamed_text']}</pre>
         </div>
+        # <script>
+        #     var container = document.getElementById('scrollable');
+        #     if (container) {{
+        #         container.scrollTop = container.scrollHeight;
+        #     }}
+        # </script>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown("### ☁️ Cloud Generated Anomalous Summaries")
+    vertex_placeholder = st.empty()
+    vertex_placeholder.markdown(
+        f"""
+        <div id="vertex_scrollable" style='height:500px; overflow-y:auto;'>
+            <pre>{st.session_state['vertex_summary']}</pre>
+        </div>
         <script>
-            var container = document.getElementById('scrollable');
+            var container = document.getElementById('vertex_scrollable');
             if (container) {{
                 container.scrollTop = container.scrollHeight;
             }}
@@ -106,8 +150,8 @@ if start_button_pressed:
         video_file='one-by-one-person-detection.mp4',
         model_dir='MiniCPM_INT8/',
         prompt="""
-        As an expert investigator, please analyze this video. Summarize the video, generating an
-        Overall Summary, Activity Observed, and Potential Suspicious Activity. 
+        As an expert investigator, please analyze this video and watch for suspicious behavior. Summarize the video, generating an
+        Overall Summary, Activity Observed, and Potential Suspicious Activity.
         It should be formatted as such:
 
         Overall Summary
@@ -128,7 +172,7 @@ if start_button_pressed:
         resolution=[480, 270],
         outfile='',
         extend_to_vertex=True,
-        anomaly_thresh=0.5,
+        anomaly_thresh=0.0,
         cloud_model="gemini-2.0-flash-exp"
     )
 
@@ -143,7 +187,7 @@ if start_button_pressed:
     current_time = 0
     chunk_summaries = []
 
-    while summarize_thread.is_alive() or not stream_queue.empty() or not merge_queue.empty():
+    while summarize_thread.is_alive() or not stream_queue.empty() or not merge_queue.empty() or not vertex_queue.empty():
         try:
             if not stream_queue.empty():
                 token = stream_queue.get(timeout=0.1)
@@ -152,7 +196,7 @@ if start_button_pressed:
                 chunk_placeholder.markdown(
                     f"""
                     <div id="scrollable" style='height:500px; overflow-y:auto;'>
-                       <div style="white-space: pre-wrap;">{safe_text}</div>
+                       <div style="white-space: pre-wrap;" id="streamed_text">{safe_text}</div>
                     </div>
                     <script>
                         var container = document.getElementById('scrollable');
@@ -183,6 +227,27 @@ if start_button_pressed:
                 )
         except queue.Empty:
             pass
+            
+        try:
+            if not vertex_queue.empty():
+                cloud_summary = vertex_queue.get(timeout=0.1)
+                st.session_state['vertex_summary'] += cloud_summary
+                safe_vertex_text = (st.session_state['vertex_summary'].replace('\n', '<br>').replace('[CLOUD SUMMARY ', '<br><strong>[CLOUD SUMMARY ').replace('sec]', 'sec]</strong>'))
+                vertex_placeholder.markdown(
+                    f"""
+                    <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+                        <div style="white-space: pre-wrap;">{safe_vertex_text}</div>
+                    </div>
+                    <script>
+                        var container = document.getElementById('merge_scrollable');
+                        container.scrollTop = container.scrollHeight;
+                    </script>
+                    """,
+                    unsafe_allow_html=True
+                )
+        except queue.Empty:
+            pass
+            
 
     summarize_thread.join()
     stop_signal.set()
