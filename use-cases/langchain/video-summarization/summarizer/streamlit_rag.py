@@ -14,7 +14,7 @@ st.title("Video RAG Search interface")
 
 query = st.text_input("Enter your query:", "")
 
-video_file = 'one-by-one-person-detection.mp4'
+video_file = 'tripod_5min.mp4'
 
 col1, col2 = st.columns([1, 1])
 

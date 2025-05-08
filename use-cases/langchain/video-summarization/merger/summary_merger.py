@@ -61,16 +61,17 @@ class SummaryMerger:
                 })
             self.ov_llm.pipeline.tokenizer.pad_token_id = self.ov_llm.pipeline.tokenizer.eos_token_id
 
-            self.summary_prompt = """Write a response that appropriately completes the request. 
-            ### Instruction: Please create a summary of the overall video highlighting all the important information. How would you rate the scene described on a scale from 0.0 to 1.0, with 0.0 representing a standard scene and 1.0 denoting a scene with suspicious activities? 
+            self.summary_prompt = """Please create a summary of the overall video highlighting all the important information, targetting potential suspicious behavior found in the given descriptions. 
+            How would you rate the scene described on a scale from 0.0 to 1.0, with 0.0 representing a standard scene and 1.0 denoting a scene with suspicious activities? 
             Please organize your answer according to this example:
 
-            **Overall Summary**: A summary of the entire text description in about five sentences or less.
-            **Activity Observed**: Key actions observed in the video.
-            **Potential Suspicious Activity**: List any activities that might indicate suspicious behavior.
-            **Anomaly Score**: A number between 0.0 and 1.0 based on your analysis.
+            Overall Summary: A summary of the entire text description in about five sentences or less, focused on the people rather than the scene itself.
 
-            ### Input: {question}
+            Potential Suspicious Activity: List any activities that might indicate suspicious behavior.
+
+            Anomaly Score: A number between 0.0 and 1.0 based on the descritption given.
+
+            ### Given Descriptions: {question}
             ### Answer:"""
 
             self.prompt = PromptTemplate.from_template(self.summary_prompt)

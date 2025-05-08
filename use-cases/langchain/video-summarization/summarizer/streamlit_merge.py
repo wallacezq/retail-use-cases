@@ -2,7 +2,7 @@ import threading
 import time
 import queue
 import streamlit as st
-from streamlit.components.v1 import html
+import streamlit.components.v1 as components
 import argparse
 from queue import Queue
 import re
@@ -16,35 +16,6 @@ from streamlit_summarizer import summarizer_main, merge_queue, vertex_queue
 
 def run_summarization(args):
     summarizer_main(args)
-
-# def create_autoscroll_text(content, element_id, height="500px"):
-#     return f"""
-#     <div id="{element_id}" style='height:{height}; overflow-y:auto;'>
-#         <div style="white-space: pre-wrap">
-#     </div>
-#     <script>
-#     function scrollToBottom() {{
-#         const element = document.getElementByID('{element_id}');
-#         if (element) {{
-#             element.scrollTop = element.scrollHeight;
-#         }}
-#     }}
-
-#     scrollToBottom();
-#     const targetNode = document.getElementById('{element_id}');
-#     const config = {{ childList: true, subtree: true}};
-
-#     const observer = new MutationObserver(callback);
-
-#     if (targetNode) {{
-#         observer.observe(targetNode, config);
-#     }}
-#     </script>
-#     """
-    
-#     html_content
-
-
 
 def poll_streaming_results(stop_signal):
     streamed_text = ""
@@ -84,7 +55,7 @@ if 'vertex_summary' not in st.session_state:
 # Split the page into two columns
 spacer_col, left_col, right_col = st.columns([0.05, 0.55, 0.4])  # Adjust ratio as needed
 
-video_path = 'one-by-one-person-detection.mp4'
+video_path = 'tripod_5min.mp4'
 
 with left_col:
     if os.path.exists(video_path):
@@ -94,19 +65,19 @@ with left_col:
     start_button_pressed = st.button("Start Summarization")
 
 with right_col:
-    st.markdown("### 📄 Chunk Summaries")
-    chunk_placeholder = st.empty()
-    chunk_placeholder.markdown(
+    st.markdown("### 🧠 Merged Summaries")
+    merge_placeholder = st.empty()
+    merge_placeholder.markdown(
         f"""
-        <div id="scrollable" style='height:600px; overflow-y:auto;'>
-            <pre>{st.session_state['streamed_text']}</pre>
+        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+            <pre>{st.session_state['merged_summary']}</pre>
         </div>
-        # <script>
-        #     var container = document.getElementById('scrollable');
-        #     if (container) {{
-        #         container.scrollTop = container.scrollHeight;
-        #     }}
-        # </script>
+        <script>
+            var container = document.getElementById('merge_scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
+            }}
+        </script>
         """,
         unsafe_allow_html=True
     )
@@ -128,15 +99,20 @@ with right_col:
     )
 
 with left_col:
-    st.markdown("### 🧠 Merged Summaries")
-    merge_placeholder = st.empty()
-    merge_placeholder.markdown(
+    st.markdown("### 📄 Chunk Summaries")
+    chunk_placeholder = st.empty()
+    safe_text = (st.session_state['streamed_text'].replace('\n', '<br>').replace('[CHUNK ', '<br><strong>[CHUNK ').replace('sec]', 'sec]</strong>'))
+    # chunk_placeholder.markdown(
+    #     create_html_component(safe_text, 500),
+    #     unsafe_allow_html=True
+    # )
+    chunk_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
-            <pre>{st.session_state['merged_summary']}</pre>
+        <div id="scrollable" style='height:500px; overflow-y:auto;'>
+            <pre>{st.session_state['streamed_text']}</pre>
         </div>
         <script>
-            var container = document.getElementById('merge_scrollable');
+            var container = document.getElementById('scrollable');
             if (container) {{
                 container.scrollTop = container.scrollHeight;
             }}
@@ -145,27 +121,26 @@ with left_col:
         unsafe_allow_html=True
     )
 
+
 if start_button_pressed:
     args = argparse.Namespace(
-        video_file='one-by-one-person-detection.mp4',
+        video_file='tripod_5min.mp4',
         model_dir='MiniCPM_INT8/',
+        #prompt="You are an expert investigator, please analyze this video and identify any instances where a person appears to pick up an item and place it in their pocket, bag, or clothing. Pay attention to items that come off the shelf, and highlight behavior that may indicate shoplifting, such as looking around, or when items are seen in one frame and not in the next (could be puttin item in a pocket instead of basket).",
         prompt="""
-        As an expert investigator, please analyze this video and watch for suspicious behavior. Summarize the video, generating an
-        Overall Summary, Activity Observed, and Potential Suspicious Activity.
+        You are an expert investigator, please analyze this video and identify any instances where a person appears to pick up an item and place it in their pocket, bag, or clothing. Pay attention to items that come off the shelf, and highlight behavior that may indicate shoplifting, such as looking around, or when items are seen in one frame and not in the next (could be puttin item in a pocket instead of basket).
+        Summarize the video - noting actions of all individuals in the scene - generating an Overall Summary and Potential Suspicious Activity.
         It should be formatted as such:
 
         Overall Summary
         Here is a detailed description of the video.
 
-        Activity Observed
-        1) Here is a bullet point list of the activities observed.
-
         Potential Suspicious Activity
         1) Here is a bullet point list of suspicious behavior (if any) to highlight.
         """,
         device='GPU.1',
-        max_new_tokens=256,
-        max_num_frames=64,
+        max_new_tokens=220,
+        max_num_frames=48,
         chunk_duration=15,
         chunk_overlap=2,
         merge_cadence=30,
@@ -193,6 +168,10 @@ if start_button_pressed:
                 token = stream_queue.get(timeout=0.1)
                 st.session_state['streamed_text'] += token
                 safe_text = (st.session_state['streamed_text'].replace('\n', '<br>').replace('[CHUNK ', '<br><strong>[CHUNK ').replace('sec]', 'sec]</strong>'))
+                # chunk_placeholder.markdown(
+                #     create_html_component(safe_text, 500),
+                #     unsafe_allow_html=True
+                # )
                 chunk_placeholder.markdown(
                     f"""
                     <div id="scrollable" style='height:500px; overflow-y:auto;'>

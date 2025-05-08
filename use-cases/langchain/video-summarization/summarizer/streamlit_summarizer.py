@@ -184,7 +184,7 @@ def summarizer_main(args):
     if args.extend_to_vertex:
         print('Initializing cloud model instance...')
         cloud_model = VertexWrapper(args.cloud_model)
-        cloud_prompt = args.prompt + 'Please analyze all attached videos as if they were combined into a single video. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0'
+        cloud_prompt = args.prompt + 'Please analyze all attached videos as if they were combined into a single video. Please notice and respond with any suspicious activity from people in the video. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0'
     else:
         print("Not initialzing cloud model instance...")
         cloud_model = None
