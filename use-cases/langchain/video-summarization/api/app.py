@@ -46,7 +46,7 @@ class SummaryMergerResponse(BaseModel):
 
 
 app = FastAPI()
-summary_merger = SummaryMerger(device="GPU", max_new_tokens=128)
+summary_merger = SummaryMerger(device="GPU", max_new_tokens=300)
 
 # Pieces pulled out from langchain-examples, not release ready code
 txt_vectorstore = None

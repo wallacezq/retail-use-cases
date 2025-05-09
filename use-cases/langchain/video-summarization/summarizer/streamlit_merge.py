@@ -7,6 +7,7 @@ import argparse
 from queue import Queue
 import re
 import os
+import base64
 
 stream_result_queue = Queue()
 merge_result_queue = Queue()
@@ -55,11 +56,23 @@ if 'vertex_summary' not in st.session_state:
 # Split the page into two columns
 spacer_col, left_col, right_col = st.columns([0.05, 0.55, 0.4])  # Adjust ratio as needed
 
-video_path = 'tripod_5min.mp4'
+#video_path = 'tripod_5min.mp4'
+
+video_path = 'computex_video.mp4'
+video_url = f'http://localhost:8005/{video_path}'
 
 with left_col:
     if os.path.exists(video_path):
         st.video(video_path)
+    # if video_path:
+    #     video_html = f"""
+    #         <video autoplay loop muted playsinline width="700">
+    #             <source src="{video_url}" type="video/mp4">
+    #             Your browser does not support the video tag.
+    #         </video>
+    #     """
+    #     st.markdown(video_html, unsafe_allow_html=True)
+
     else:
         st.warning("The video file cannot be found")
     start_button_pressed = st.button("Start Summarization")
@@ -69,7 +82,7 @@ with right_col:
     merge_placeholder = st.empty()
     merge_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+        <div id="merge_scrollable" style='height:500px; overflow-y:auto;'>
             <pre>{st.session_state['merged_summary']}</pre>
         </div>
         <script>
@@ -81,6 +94,7 @@ with right_col:
         """,
         unsafe_allow_html=True
     )
+    right_col.markdown("<div style='height: 50px;'></div>", unsafe_allow_html=True)
     st.markdown("### ☁️ Cloud Generated Anomalous Summaries")
     vertex_placeholder = st.empty()
     vertex_placeholder.markdown(
@@ -124,7 +138,7 @@ with left_col:
 
 if start_button_pressed:
     args = argparse.Namespace(
-        video_file='tripod_5min.mp4',
+        video_file='computex_video.mp4',
         model_dir='MiniCPM_INT8/',
         #prompt="You are an expert investigator, please analyze this video and identify any instances where a person appears to pick up an item and place it in their pocket, bag, or clothing. Pay attention to items that come off the shelf, and highlight behavior that may indicate shoplifting, such as looking around, or when items are seen in one frame and not in the next (could be puttin item in a pocket instead of basket).",
         prompt="""
@@ -147,7 +161,7 @@ if start_button_pressed:
         resolution=[480, 270],
         outfile='',
         extend_to_vertex=True,
-        anomaly_thresh=0.0,
+        anomaly_thresh=0.5,
         cloud_model="gemini-2.0-flash-exp"
     )
 
