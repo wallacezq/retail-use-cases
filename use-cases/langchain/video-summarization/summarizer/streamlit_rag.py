@@ -2,7 +2,9 @@ import streamlit as st
 import ast
 from rag import search_in_milvus
 import re
+import os
 
+os.environ["no_proxy"] = "localhost,127.0.0.1"
 def play_video(video_path, offset):
     video_file = open(video_path, 'rb') 
     video_bytes = video_file.read() 
