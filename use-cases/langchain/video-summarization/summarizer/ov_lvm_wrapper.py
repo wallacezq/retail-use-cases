@@ -151,7 +151,7 @@ def OVMiniCPMV26Worker(model_dir: str,
                        resolution: list[int]) -> object:
     # Start ov genai pipeline
     enable_compile_cache = dict()
-    if "GPU" == device:
+    if "GPU" in device:
         # Cache compiled models on disk for GPU to save time on the
         # next run. It's not beneficial for CPU.
         enable_compile_cache["CACHE_DIR"] = "./cache/vlm_cache"

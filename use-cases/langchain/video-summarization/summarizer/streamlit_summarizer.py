@@ -11,6 +11,7 @@ import threading
 import queue
 import re
 import uuid
+import subprocess
 
 import requests
 from langchain.prompts import PromptTemplate
@@ -18,6 +19,7 @@ from langchain_community.document_loaders.video import VideoChunkLoader
 
 from ov_lvm_wrapper import OVMiniCPMV26Worker
 from vertex_extension import VertexWrapper
+
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 
@@ -28,13 +30,50 @@ merge_queue = queue.Queue()
 vertex_queue = queue.Queue()
 vertex_score = queue.Queue()
 
+alert_queue = queue.Queue()
+
+stop_signal = threading.Event()
+
+def concatenate_videos(video_path, output_path='merged_video.mp4', list_file='merge_videos.txt'):
+    with open(list_file, "w") as f:
+        for path in video_path:
+            f.write(f"file '{path}'\n")
+
+    cmd = [
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_file,
+        "-c", "copy",
+        output_path
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print(f"Successfully created {output_path}")
+        return output_path
+    except subprocess.CalledProcessError as e:
+        print("Error during video concatenation")
+        return None
+    
+def delete_file_if_exists(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"Removed {path}")
+        else:
+            print(f"{path} not found")
+    except Exception as e:
+        print(f"Error in removing file {path}")
+
 def post_request(input_data):
     formatted_req = {"summaries": input_data}
     response = requests.post(url="http://127.0.0.1:8000/merge_summaries", json=formatted_req)
     return response.content
 
 def ingest_into_milvus(ingest_q):
-    while True:
+    #while True:
+    while not stop_signal.is_set():
         chunk_summaries = []
         end_ingestion = False
         while not ingest_q.empty():
@@ -105,6 +144,8 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                         color = "red"
                     styled_scoreline = f'<span style="color:{color}">Anomaly score from LLM: {score}</span>'
                     merge_output = re.sub("Anomaly score from LLM:\s*([0-9.]+)", styled_scoreline, merge_output)
+                
+                alert_queue.put(score)                    
                 merge_queue.put(merge_output)
                 print(f"Updated merge queue with merged summary: {merge_output}\n")
                 print(f"Merge Result from local LLM: {merge_res['overall_summary']}\n")
@@ -119,9 +160,17 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                 # Use processing_chunk_ids to calculate chunks to upload
                 merged_chunks = [os.path.join(loader.output_dir,
                                               f"chunk_{ch_id}.mp4") for ch_id in processing_chunk_ids]
-                print("Created merged chunks!")
-                cloud_response = cloud_model.generate(cloud_prompt, video_paths=merged_chunks)
+                #print("Created merged chunks!")
+                #cloud_response = cloud_model.generate(cloud_prompt, video_paths=merged_chunks)
                 #print(f"\n\Generation from cloud model: {cloud_response}\n\n")
+                merged_path = concatenate_videos(merged_chunks, output_path='merged_video.mp4')
+                
+                cloud_response = cloud_model.generate(cloud_prompt, video_paths=[merged_path])
+
+                delete_file_if_exists(merged_path)
+
+                print(f"\n\Generation from cloud model: {cloud_response}\n\n")
+                
                 anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
 
                 # Update the merge res summary and anomaly score with vertex output
@@ -133,14 +182,19 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                 elif anomaly_score < 0.7:
                     color = "orange"
                 else:
-                    color = "red"
+                    color = "red"                
+                
                 styled_scoreline = f'<span style="color:{color}">Anomaly score from gemini: {anomaly_score}</span>'
-                match = re.search(r"\*?\*?Anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", cloud_response, re.DOTALL)
-                if match:    
-                    print("Anomaly line detected from regex!!\n\n\n")
-                    sys.exit()
-                    cloud_response = re.sub(r"\*?\*?anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", styled_scoreline, cloud_response)
-                cloud_response = f"[CLOUD SUMMARY {merge_start_time}-{end_time}sec]\n{cloud_response}\n\n"
+                #match = re.search(r"\*?\*?Anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", cloud_response, re.DOTALL)
+                #if match:    
+                #    print("Anomaly line detected from regex!!\n\n\n")
+                #    sys.exit()
+                
+                #cloud_response = re.sub(r"\*?\*?anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", styled_scoreline, cloud_response)
+                #
+                cloud_response = re.sub(r"\*\*anomaly score\*\*: [-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", styled_scoreline, cloud_response)
+                print(f"Cloud response: {cloud_response}")
+                cloud_response = f"[CLOUD SUMMARY {merge_start_time}-{end_time}sec]\n{cloud_response}\n\n"                
                 vertex_queue.put(cloud_response)
                 cloud_model.cleanup()
                 print("Cloud Summary Time: {} sec\n\n".format(time.time() - cloud_st_time))
@@ -184,7 +238,7 @@ def summarizer_main(args):
     if args.extend_to_vertex:
         print('Initializing cloud model instance...')
         cloud_model = VertexWrapper(args.cloud_model)
-        cloud_prompt = args.prompt + 'Please analyze all attached videos as if they were combined into a single video. Please notice and respond with any suspicious activity from people in the video. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0'
+        cloud_prompt = args.prompt + "Please notice and respond with any suspicious activity from people in the video. Suspicious activity includes sticking items into pockets, and/or looking around for witnesses. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0"
     else:
         print("Not initialzing cloud model instance...")
         cloud_model = None
@@ -219,6 +273,11 @@ def summarizer_main(args):
         tot_inf_st_time = time.time()
 
         for doc, is_last in tag_last(loader.lazy_load()):
+            if stop_signal.is_set():
+              print(f"summarizer_main - stop_signal received")
+              return
+              
+              
             chunk_st_time = time.time()
             video_name = Path(doc.metadata['chunk_path'])
             inputs = {"video": video_name, "question": args.prompt}

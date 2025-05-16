@@ -23,9 +23,11 @@ echo "Running Video Summarizer"
 streamlit run summarizer/streamlit_merge.py --server.port 8501 &
 MERGER_PID=$!
 streamlit run summarizer/streamlit_rag.py --server.port 8502
+RAG_PID=$!
 #streamlit run streamlit_test.py --server.port 8502
 
 # terminate fastapi app after video summarization concludes
 kill $APP_PID
 kill $MERGER_PID
+kill $RAG_PID
 #pkill -f "python -m http.server 8002"

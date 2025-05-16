@@ -14,9 +14,43 @@ st.set_page_config(page_title="RAG Seach UI", layout="wide")
 
 st.title("Video RAG Search interface")
 
-query = st.text_input("Enter your query:", "")
+if 'prompt' not in st.session_state.keys():
+    st.session_state['prompt'] = ''
 
-video_file = 'tripod_5min.mp4'
+
+query_options = st.selectbox(
+        'Example Prompts',
+        (
+            'Enter Text', 
+            'Anomaly > 0.7',
+            'Man wearing glasses', 
+            'People reading item description',
+            'Man holding red shopping basket',
+            'Was there any person wearing a blue shirt seen today?',
+            'Was there any person wearing a blue shirt seen in the last 6 hours?',
+            'Was there any person wearing a blue shirt seen last Sunday?',
+            'Was a person wearing glasses seen in the last 30 minutes?',
+            'Was a person wearing glasses seen in the last 72 hours?',
+        ),
+        key='example_prompt'
+    )
+
+
+#query = st.text_input("Enter your query:", "")
+
+if st.session_state.example_prompt == 'Enter Text':
+  if prompt := st.text_input("Enter your query:", disabled=False):
+    st.session_state.prompt = prompt
+    
+else:
+  prompt = st.session_state.example_prompt
+  st.session_state.prompt = prompt
+  
+
+query = st.session_state.prompt
+
+#video_file = 'tripod_5min.mp4'
+video_file = 'computex_video.mp4'
 
 col1, col2 = st.columns([1, 1])
 
