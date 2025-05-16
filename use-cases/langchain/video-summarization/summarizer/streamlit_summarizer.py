@@ -17,9 +17,8 @@ import requests
 from langchain.prompts import PromptTemplate
 from langchain_community.document_loaders.video import VideoChunkLoader
 
-from ov_lvm_wrapper import OVMiniCPMV26Worker
+from ov_lvm_wrapper import OVMiniCPMV26Worker, last_token_time, chunk_id, new_chunk_flag, generation_started, chunk_lock
 from vertex_extension import VertexWrapper
-
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 
@@ -33,6 +32,7 @@ vertex_score = queue.Queue()
 alert_queue = queue.Queue()
 
 stop_signal = threading.Event()
+
 
 def concatenate_videos(video_path, output_path='merged_video.mp4', list_file='merge_videos.txt'):
     with open(list_file, "w") as f:
@@ -213,6 +213,16 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
 
 def summarizer_main(args):
     init_st_time = time.time()
+    
+    global last_token_time, chunk_id, new_chunk_flag, generation_started, is_first_token
+    
+    with chunk_lock:
+      last_token_time = None
+      chunk_id = 0
+      new_chunk_flag = False
+      generation_started = False
+      is_first_token = True
+
 
     # Check video exists
     if not os.path.exists(args.video_file):
@@ -275,6 +285,7 @@ def summarizer_main(args):
         for doc, is_last in tag_last(loader.lazy_load()):
             if stop_signal.is_set():
               print(f"summarizer_main - stop_signal received")
+              pool.shutdown(wait=True, cancel_futures=True)
               return
               
               

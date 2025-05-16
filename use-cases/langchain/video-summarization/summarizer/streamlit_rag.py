@@ -22,7 +22,7 @@ query_options = st.selectbox(
         'Example Prompts',
         (
             'Enter Text', 
-            'Anomaly > 0.7',
+            #'Anomaly > 0.7',
             'Man wearing glasses', 
             'People reading item description',
             'Man holding red shopping basket',

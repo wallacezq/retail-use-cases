@@ -81,7 +81,7 @@ try:
         connection_args={"uri": f"http://{milvus_uri}:{milvus_port}", "db_name": db_name},
         index_params={"index_type": "FLAT", "metric_type": "L2"},
         consistency_level="Strong",
-        drop_old=False,
+        drop_old=True,
     )
 
     print("Connected to Milvus DB successfully.")
