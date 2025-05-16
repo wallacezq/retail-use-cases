@@ -124,6 +124,8 @@ merge_lock = threading.Lock()  # Add a threading lock
 def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, extend_to_vertex, 
                        cloud_model, cloud_prompt, anomaly_thresh, loader, doc, mode="w",
                        processing_chunk_ids=None):
+
+  if not stop_signal.is_set():
     try:
         with merge_lock:  # Ensure only one thread accesses the merger at a time
             print('\n\nSending Chunks to Merger!\n\n')
