@@ -17,7 +17,7 @@ import requests
 from langchain.prompts import PromptTemplate
 from langchain_community.document_loaders.video import VideoChunkLoader
 
-from ov_lvm_wrapper import OVMiniCPMV26Worker, last_token_time, chunk_id, new_chunk_flag, generation_started, chunk_lock
+from ov_lvm_wrapper import OVMiniCPMV26Worker, last_token_time, chunk_id, new_chunk_flag, generation_started, chunk_lock, reset_chunk_variables
 from vertex_extension import VertexWrapper
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
@@ -218,12 +218,8 @@ def summarizer_main(args):
     
     global last_token_time, chunk_id, new_chunk_flag, generation_started, is_first_token
     
-    with chunk_lock:
-      last_token_time = None
-      chunk_id = 0
-      new_chunk_flag = False
-      generation_started = False
-      is_first_token = True
+    reset_chunk_variables()
+    init_st_time = time.time()
 
 
     # Check video exists

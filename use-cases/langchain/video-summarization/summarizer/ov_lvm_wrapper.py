@@ -24,6 +24,19 @@ chunk_duration = 15
 chunk_overlap = 2
 chunk_end = chunk_duration
 
+def reset_chunk_variables():
+    global last_token_time, chunk_id, new_chunk_flag, generation_started, is_first_token
+    global chunk_start, chunk_end, chunk_duration, chunk_overlap, append_newline    
+    with chunk_lock:       
+        last_token_time = None       
+        chunk_id = 0       
+        new_chunk_flag = False       
+        generation_started = False       
+        is_first_token = True       
+        append_newline = False      
+        chunk_start = 0       
+        chunk_end = chunk_duration
+
 def encode_video(video_path: str,
                  max_num_frames: int = 64,
                  resolution: list = []) -> list:
