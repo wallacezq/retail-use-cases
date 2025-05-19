@@ -15,7 +15,7 @@ merge_result_queue = Queue()
 
 from ov_lvm_wrapper import stream_queue
 
-from streamlit_summarizer import summarizer_main, merge_queue, vertex_queue, vertex_score, alert_queue, stop_signal
+from streamlit_summarizer import summarizer_main, merge_queue, vertex_queue, alert_queue, stop_signal
 
 
 # Initialize session state
@@ -30,9 +30,6 @@ if 'vertex_summary' not in st.session_state:
     
 if 'summarization_started' not in st.session_state:
     st.session_state['summarization_started'] = False
-    
-if 'load_id' not in st.session_state:
-  st.session_state['load_id'] = 0
     
 def vlm_video_player(url_or_path, **kwargs):
   st.video(url_or_path, **kwargs)
@@ -63,6 +60,8 @@ def poll_merge_results(stop_signal):
             
 def toggle_start_button():
     if st.session_state['summarization_started']:
+      stop_signal.set()
+      st.session_state['summarization_started'] = False
       st.toast('Summarization process already started', icon=":material/info:")
       return
       
@@ -74,8 +73,37 @@ def clear_queue(q):
   while not q.empty():
     q.get()           
 
-def toggle_relaunch_button():
-  stop_signal.set()
+# def toggle_relaunch_button():
+#   stop_signal.set()
+
+def toggle_relaunch_button():  
+    clear_queue(stream_result_queue)   
+    clear_queue(merge_result_queue)  
+    clear_queue(stream_queue)  
+    clear_queue(merge_queue)   
+    clear_queue(vertex_queue)   
+    clear_queue(alert_queue)    # Reset session state   
+    st.session_state['streamed_text'] = '' 
+    st.session_state['merged_summary'] = ''  
+    st.session_state['vertex_summary'] = ''
+    st.toast('Summarization process stopped', icon=":material/info:") # Main loopwhile st.session_state['summarization_started'] and not stop_signal.is_set():    # Your existing logic for polling queues and updating UI    # Ensure each thread checks stop_signal and exits if set
+
+    stop_signal.set()  
+    st.session_state['summarization_started'] = False # Wait for all threads to finish   
+    if summarize_thread is not None:       
+        summarize_thread.join()
+ 
+    # clear_queue(stream_result_queue)   
+    # clear_queue(merge_result_queue)  
+    # clear_queue(stream_queue)  
+    # clear_queue(merge_queue)   
+    # clear_queue(vertex_queue)   
+    # clear_queue(alert_queue)
+    # # Reset session state   
+    # st.session_state['streamed_text'] = '' 
+    # st.session_state['merged_summary'] = ''  
+    # st.session_state['vertex_summary'] = '' 
+    # st.toast('Summarization process stopped', icon=":material/info:") # Main loopwhile st.session_state['summarization_started'] and not stop_signal.is_set():    # Your existing logic for polling queues and updating UI    # Ensure each thread checks stop_signal and exits if set
             
 def ShowMessage(severity_level):
     icon=""
@@ -96,8 +124,6 @@ logo_path = 'intel-logo-0.png'
 st.logo(logo_path)
 
 footer = """<style>.footer {position: fixed; left: 0; bottom: 0; width: 100%;background-color:#000000;color: white;text-align: center;}</style><div class='footer'><p>Powered by Intel&copy; Core&trade; Processor Series 2 and Intel&copy; Arc&trade; B-Series GPU.</p></div>"""
-
-st.session_state['load_id']  += 1
 
 st.set_page_config(initial_sidebar_state='collapsed', layout="wide")
 
@@ -135,28 +161,25 @@ with left_col:
   
       else:
           st.warning("The video file cannot be found")
-    start_button_pressed = st.button("Start Summarization", on_click=toggle_start_button, disabled=st.session_state['summarization_started'])
+    start_button_pressed = st.button("Start Summarization", on_click=toggle_start_button,) 
+                                     #disabled=st.session_state['summarization_started'])
   
-css_tag = '{behavior: "smooth"}'
 
 with right_col:
     alert_placeholder = st.empty()
     st.markdown("### 🧠 Merged Summaries")
     merge_placeholder = st.empty()
-
     merge_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:500px; overflow-y:auto'>
+        <div id="merge_scrollable" style='height:500px; overflow-y:auto;'>
             <pre>{st.session_state['merged_summary']}</pre>
         </div>
-        <!--<div id="end-of-chat-stream-merged"></div>        
         <script>
-            var dummy_merged={st.session_state['load_id']}
-            var container_merged = document.getElementById('end-of-chat-stream-merged');
-            if (container_merged && dummy_merged) {{
-                container_merged.scrollIntoView({css_tag});
+            var container = document.getElementById('merge_scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
             }}
-        </script>-->
+        </script>
         """,
         unsafe_allow_html=True
     )
@@ -165,17 +188,15 @@ with right_col:
     vertex_placeholder = st.empty()
     vertex_placeholder.markdown(
         f"""
-        <div id="vertex_scrollable" style='height:500px; overflow-y:auto'>
+        <div id="vertex_scrollable" style='height:500px; overflow-y:auto;'>
             <pre>{st.session_state['vertex_summary']}</pre>
         </div>
-        <!--<div id="end-of-chat-vertex"></div>
         <script>
-            var dummy_vertex={st.session_state['load_id']}
-            var container_vertex = document.getElementById('end-of-chat-stream-vertex');
-            if (container_vertex && dummy_vertex) {{
-                container_vertex.scrollIntoView({css_tag});
+            var container = document.getElementById('vertex_scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
             }}
-        </script>-->
+        </script>
         """,
         unsafe_allow_html=True
     )
@@ -188,54 +209,50 @@ with left_col:
     #     create_html_component(safe_text, 500),
     #     unsafe_allow_html=True
     # )
-    
-    #<div id="scrollable" style="height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
-    #chunk_placeholder.markdown(
-    chunk_placeholder_text=f"""
-        <div id="scrollable_stream" style='height:500px; overflow-y:auto'>
+    chunk_placeholder.markdown(
+        f"""
+        <div id="scrollable" style='height:500px; overflow-y:auto;'>
             <pre>{st.session_state['streamed_text']}</pre>
         </div>
-        <!--<div id="end-of-chat-stream"></div>
         <script>
-            var dummy_stream={st.session_state['load_id']}
-            var container_stream = document.getElementById('end-of-chat-stream-stream');
-            if (container_stream && dummy_stream) {{
-                container_stream.scrollIntoView({css_tag});
+            var container = document.getElementById('scrollable');
+            if (container) {{
+                container.scrollTop = container.scrollHeight;
             }}
-        </script>-->
-        <script>
-            // Automatically scroll to the bottom of the content
-            var scrollableDiv_stream = document.getElementById('scrollable_stream');
-            var dummy_stream={st.session_state['load_id']}
-            scrollableDiv_stream.scrollTop = scrollableDiv_stream.scrollHeight;
-        </script>        
-        """
-    #    unsafe_allow_html=True
-    #)
-    
-    # Inject the HTML and JavaScript
-    st.components.v1.html(chunk_placeholder_text, height=500)
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 summarize_thread = None
 
 if start_button_pressed: 
-  
-    stop_signal.clear()
-      
-    #stream_result_queue = Queue()
-    #merge_result_queue = Queue()
     clear_queue(stream_result_queue)
     clear_queue(merge_result_queue)
     clear_queue(stream_queue)
     clear_queue(merge_queue)
     clear_queue(vertex_queue)
-    clear_queue(vertex_score)
     clear_queue(alert_queue)
 
     st.session_state['streamed_text'] = ''
     st.session_state['merged_summary'] = ''
     st.session_state['vertex_summary'] = ''
+  
+    stop_signal.clear()
+      
+    # stream_result_queue = Queue()
+    # merge_result_queue = Queue()
+    # clear_queue(stream_result_queue)
+    # clear_queue(merge_result_queue)
+    # clear_queue(stream_queue)
+    # clear_queue(merge_queue)
+    # clear_queue(vertex_queue)
+    # clear_queue(alert_queue)
+
+    # st.session_state['streamed_text'] = ''
+    # st.session_state['merged_summary'] = ''
+    # st.session_state['vertex_summary'] = ''
     
     st.session_state['summarization_started'] = True
     
@@ -266,7 +283,7 @@ if start_button_pressed:
         outfile='',
         extend_to_vertex=True,
         anomaly_thresh=0.5,
-        cloud_model="gemini-2.0-flash-exp"
+        cloud_model="gemini-2.5-pro-preview-05-06"
     )
 
     #stop_signal = threading.Event()
@@ -345,12 +362,13 @@ while st.session_state['summarization_started'] and not stop_signal.is_set(): # 
                   f"""
                   <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
                       <div style="white-space: pre-wrap;flex-direction: column-reverse;">{safe_merged_text}</div>
-                  </div>                  
-                  <script>
-                      var container = document.getElementById('vertex_scrollable');
-                      container.scrollTop = container.scrollHeight;
-                  </script>
+                  </div>
                   """,
+                  #<script>
+                  #    var container = document.getElementById('merge_scrollable');
+                  #    container.scrollTop = -container.scrollHeight;
+                  #</script>
+                  #""",
                   unsafe_allow_html=True
               )
       except queue.Empty:
@@ -363,12 +381,12 @@ while st.session_state['summarization_started'] and not stop_signal.is_set(): # 
               safe_vertex_text = (st.session_state['vertex_summary'].replace('\n', '<br>').replace('[CLOUD SUMMARY ', '<br><strong>[CLOUD SUMMARY ').replace('sec]', 'sec]</strong>'))
               vertex_placeholder.markdown(
                   f"""
-                  <div id="vertex_scrollable" style='height:400px; overflow-y:auto;'>
+                  <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
                       <div style="white-space: pre-wrap;">{safe_vertex_text}</div>
                   </div>
                   <script>
-                      var container = document.getElementById('vertex_scrollable');
-                      container.scrollTop = container.scrollHeight;
+                      var container = document.getElementById('merge_scrollable');
+                      container.scrollTop = -container.scrollHeight;
                   </script>
                   """,
                   unsafe_allow_html=True

@@ -17,7 +17,7 @@ import requests
 from langchain.prompts import PromptTemplate
 from langchain_community.document_loaders.video import VideoChunkLoader
 
-from ov_lvm_wrapper import OVMiniCPMV26Worker, last_token_time, chunk_id, new_chunk_flag, generation_started, chunk_lock, reset_chunk_variables
+from ov_lvm_wrapper import OVMiniCPMV26Worker, reset_chunk_variables
 from vertex_extension import VertexWrapper
 
 os.environ["no_proxy"] = "localhost,127.0.0.1"
@@ -27,12 +27,14 @@ merge_queue = queue.Queue()
 
 # Create thread safe queue for vertex summaries
 vertex_queue = queue.Queue()
-vertex_score = queue.Queue()
+
+ingest_demo_chunks = False
+
+# Create variable for loading model onto GPU
+_model_cache = None
 
 alert_queue = queue.Queue()
-
 stop_signal = threading.Event()
-
 
 def concatenate_videos(video_path, output_path='merged_video.mp4', list_file='merge_videos.txt'):
     with open(list_file, "w") as f:
@@ -72,17 +74,14 @@ def post_request(input_data):
     return response.content
 
 def ingest_into_milvus(ingest_q):
-    #while True:
-    end_ingestion = False
-    while not stop_signal.is_set() and not end_ingestion:
+    while not stop_signal.is_set():
         chunk_summaries = []
-        #end_ingestion = False
+        end_ingestion = False
         while not ingest_q.empty():
             item = ingest_q.get()
             if item == "END":
                 end_ingestion = True
                 ingest_q.task_done()
-                print(f"ingest_queue - END reached, task done")
                 break
             chunk_summaries.append(item)
 
@@ -125,14 +124,28 @@ merge_lock = threading.Lock()  # Add a threading lock
 
 def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, extend_to_vertex, 
                        cloud_model, cloud_prompt, anomaly_thresh, loader, doc, mode="w",
-                       processing_chunk_ids=None):
-
-  if not stop_signal.is_set():
+                       processing_chunk_ids=None, merge_threads=None):
+    # Check if stop_signal is set before starting   
+    if stop_signal.is_set():       
+        print("\n\nMerge operation aborted due to stop signal.\n\n")
+        if merge_threads:
+            for t in merge_threads:
+                print(f"Joinging threads in merge stop: {t}")
+                t.join()
+        return None
+    
     try:
         with merge_lock:  # Ensure only one thread accesses the merger at a time
             print('\n\nSending Chunks to Merger!\n\n')
             merge_st_time = time.time()
             with ThreadPoolExecutor() as pool:
+                if stop_signal.is_set():       
+                    print("\n\nMerge operation aborted due to stop signal.\n\n")
+                    if merge_threads:
+                        for t in merge_threads:
+                            print(f"Joinging threads in merge stop: {t}")
+                            t.join()
+                    return None
                 future = pool.submit(post_request, chunk_summaries)
                 merge_res = ast.literal_eval(future.result().decode("utf-8"))
                 merge_output = f"[MERGED SUMMARY {merge_start_time}-{end_time}sec]\n{merge_res['overall_summary']}\n\nAnomaly score from LLM: {merge_res['anomaly_score']}\n\n"
@@ -148,8 +161,8 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                         color = "red"
                     styled_scoreline = f'<span style="color:{color}">Anomaly score from LLM: {score}</span>'
                     merge_output = re.sub("Anomaly score from LLM:\s*([0-9.]+)", styled_scoreline, merge_output)
-                
-                alert_queue.put(score)                    
+
+                alert_queue.put(score)
                 merge_queue.put(merge_output)
                 print(f"Updated merge queue with merged summary: {merge_output}\n")
                 print(f"Merge Result from local LLM: {merge_res['overall_summary']}\n")
@@ -158,15 +171,23 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
 
             # Extend to cloud, if asked
             if extend_to_vertex and merge_res['anomaly_score'] >= anomaly_thresh:
+                # Check if stop_signal is set before starting   
+                if stop_signal.is_set():       
+                    print("\n\nCloud operation aborted due to stop signal.\n\n")
+                    if merge_threads:
+                        for t in merge_threads:
+                            print(f"Joinging threads in merge stop: {t}")
+                            t.join()
+                    return None
+
                 print("Sending anomalous clip to Vertex!")
                 cloud_st_time = time.time()
                 
                 # Use processing_chunk_ids to calculate chunks to upload
                 merged_chunks = [os.path.join(loader.output_dir,
                                               f"chunk_{ch_id}.mp4") for ch_id in processing_chunk_ids]
-                #print("Created merged chunks!")
-                #cloud_response = cloud_model.generate(cloud_prompt, video_paths=merged_chunks)
-                #print(f"\n\Generation from cloud model: {cloud_response}\n\n")
+                #print(f"Created merged chunks: {merged_chunks}")
+
                 merged_path = concatenate_videos(merged_chunks, output_path='merged_video.mp4')
                 
                 cloud_response = cloud_model.generate(cloud_prompt, video_paths=[merged_path])
@@ -174,7 +195,6 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                 delete_file_if_exists(merged_path)
 
                 print(f"\n\Generation from cloud model: {cloud_response}\n\n")
-                
                 anomaly_score = cloud_model.extract_anomaly_score(cloud_response)
 
                 # Update the merge res summary and anomaly score with vertex output
@@ -186,19 +206,11 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
                 elif anomaly_score < 0.7:
                     color = "orange"
                 else:
-                    color = "red"                
-                
+                    color = "red"
                 styled_scoreline = f'<span style="color:{color}">Anomaly score from gemini: {anomaly_score}</span>'
-                #match = re.search(r"\*?\*?Anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", cloud_response, re.DOTALL)
-                #if match:    
-                #    print("Anomaly line detected from regex!!\n\n\n")
-                #    sys.exit()
-                
-                #cloud_response = re.sub(r"\*?\*?anomaly Score\*?\*?:?\s*(-?\d+(\.\d+)?)", styled_scoreline, cloud_response)
-                #
                 cloud_response = re.sub(r"\*\*anomaly score\*\*: [-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", styled_scoreline, cloud_response)
                 print(f"Cloud response: {cloud_response}")
-                cloud_response = f"[CLOUD SUMMARY {merge_start_time}-{end_time}sec]\n{cloud_response}\n\n"                
+                cloud_response = f"[CLOUD SUMMARY {merge_start_time}-{end_time}sec]\n{cloud_response}\n\n"
                 vertex_queue.put(cloud_response)
                 cloud_model.cleanup()
                 print("Cloud Summary Time: {} sec\n\n".format(time.time() - cloud_st_time))
@@ -216,13 +228,25 @@ def async_merge_chunks(chunk_summaries, merge_start_time, end_time, outfile, ext
         return None
 
 def summarizer_main(args):
-    init_st_time = time.time()
-    
-    global last_token_time, chunk_id, new_chunk_flag, generation_started, is_first_token
-    
     reset_chunk_variables()
     init_st_time = time.time()
 
+    # Check if model is already loaded
+    global _model_cache
+    if _model_cache is None:
+        print("Loading model onto GPU...")
+        resolution = [] if not args.resolution else args.resolution
+        _model_cache = OVMiniCPMV26Worker(
+        model_dir=args.model_dir,
+        device=args.device,
+        max_new_tokens=args.max_new_tokens,
+        max_num_frames=args.max_num_frames,
+        resolution=resolution
+    )
+    else:
+        print("Using cached model")
+
+    ov_minicpm = _model_cache
 
     # Check video exists
     if not os.path.exists(args.video_file):
@@ -233,22 +257,21 @@ def summarizer_main(args):
         template="{video},{question}"
     )
 
-    resolution = [] if not args.resolution else args.resolution
-    ov_minicpm = OVMiniCPMV26Worker(
-        model_dir=args.model_dir,
-        device=args.device,
-        max_new_tokens=args.max_new_tokens,
-        max_num_frames=args.max_num_frames,
-        resolution=resolution
-    )
-
     chain = prompt | ov_minicpm
 
    # Initialize cloud model
     if args.extend_to_vertex:
         print('Initializing cloud model instance...')
         cloud_model = VertexWrapper(args.cloud_model)
-        cloud_prompt = args.prompt + "Please notice and respond with any suspicious activity from people in the video. Suspicious activity includes sticking items into pockets, and/or looking around for witnesses. In addition, the last information produced must be a score between 0 and 1 to represent how suspicious the the video is. The score should be a float rounded to the tenth decimal and formatted as the following example: \n **anomaly score**: 0.0"
+        cloud_prompt = """You are an expert investigator. See attached video of a shopping aisle security camera. 
+        I want you to call out moments of identified or highly suspected shoplifting or stealing. 
+        Look at people interacting with objects on display and taking into their possession. Please then provide a score between 0 and 1 
+        to represent the amount of suspicious activity you've just analyzed. If you see no humans, then score must be 0, as there is no 
+        suspicious activity possible. The score should be a float rounded to the tenth decimal.
+        Please organize your answer according to this example:
+        Overall Summary: A summary of the entire text description in about five sentences or less, focused on the people rather than the scene itself.
+        Potential Suspicious Activity: List any activities that might indicate suspicious behavior.
+        **anomaly score**: <floating point value representing suspicious activity>"""
     else:
         print("Not initialzing cloud model instance...")
         cloud_model = None
@@ -265,7 +288,7 @@ def summarizer_main(args):
     merge_cadence = max(1, int(args.merge_cadence / args.chunk_duration)) if args.merge_cadence else float('inf')
 
     print("\nInitialization Time: {} sec\n".format(time.time() - init_st_time))
-    
+
     # Loop through docs and generate individual chunk summaries
     mode = "w"
     chunk_summaries = {}
@@ -277,22 +300,23 @@ def summarizer_main(args):
     print("Main: Starting chunk summary ingestion into Milvus")
 
     # Ingest chunk summaries into the running Milvus instance
+    global ingest_demo_chunks
+
+    # Ingest chunk summaries into the running Milvus instance
     with ThreadPoolExecutor() as pool:
-        milvus_future = pool.submit(ingest_into_milvus, ingest_queue)    
+        if not ingest_demo_chunks:
+            milvus_future = pool.submit(ingest_into_milvus, ingest_queue)
 
         tot_inf_st_time = time.time()
 
         for doc, is_last in tag_last(loader.lazy_load()):
             if stop_signal.is_set():
-              print(f"summarizer_main - stop_signal received")
-              milvus_future.cancel()
-              pool.shutdown(wait=True, cancel_futures=True)              
-              return
-              
-            if is_last:
-              print(f"main - is_last: {is_last}")
-              
-              
+                print("Summarizer main - stop signal recieved")
+                for t in merge_threads:
+                    print(f"Joinging thread: {t}")
+                    t.join()
+                return
+
             chunk_st_time = time.time()
             video_name = Path(doc.metadata['chunk_path'])
             inputs = {"video": video_name, "question": args.prompt}
@@ -308,17 +332,18 @@ def summarizer_main(args):
 
             print(f"Chunk Summary Time: {time.time() - chunk_st_time} sec\n")
 
-            ingest_queue.put(
-                {
-                    "chunk_id": f"{doc.metadata['chunk_id']}_{uuid.uuid4()}",
-                    "chunk_path": doc.metadata['chunk_path'],
-                    "chunk_summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}",
-                    "start_time": f"{doc.metadata['start_time']}",
-                    "end_time": f"{doc.metadata['end_time']}"
+            if not ingest_demo_chunks:
+                ingest_queue.put(
+                    {
+                        "chunk_id": f"{doc.metadata['chunk_id']}_{uuid.uuid4()}",
+                        "chunk_path": doc.metadata['chunk_path'],
+                        "chunk_summary": f"Start time: {doc.metadata['start_time']} End time: {doc.metadata['end_time']}\n{output}",
+                        "start_time": f"{doc.metadata['start_time']}",
+                        "end_time": f"{doc.metadata['end_time']}"
 
-                }
-            )
-            print(f"Milvus ingested chunk: {doc.metadata['start_time']}-{doc.metadata['end_time']}")
+                    }
+                )
+                print(f"Milvus ingested chunk: {doc.metadata['chunk_id']}")
 
             call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
@@ -326,7 +351,7 @@ def summarizer_main(args):
                 continue
 
             if call_merger or (not call_merger and is_last):
-                print(f'\n\nSending Chunks to Merger (cm: {call_merger})!\n\n')
+                print('\n\nSending Chunks to Merger!\n\n')
 
                 # Create a dictionary without chunk_id for async_merge_chunks
                 chunk_summaries_no_id = {key: value["summary"] for key, value in chunk_summaries.items()}
@@ -339,7 +364,7 @@ def summarizer_main(args):
                     target=async_merge_chunks,
                     args=(chunk_summaries_no_id, merge_start_time, doc.metadata['end_time'],
                         args.outfile, args.extend_to_vertex, cloud_model, cloud_prompt,
-                        args.anomaly_thresh, loader, doc, mode, processing_chunk_ids)
+                        args.anomaly_thresh, loader, doc, mode, processing_chunk_ids, merge_threads)
                 )
                 merge_thread.start()
                 merge_threads.append(merge_thread)
@@ -356,9 +381,10 @@ def summarizer_main(args):
     for t in merge_threads:
         t.join()
 
-    #while not ingest_queue.empty():
-    #    time.sleep(0.5)
-    ingest_queue.put("END")
+    if ingest_demo_chunks:
+        while not ingest_queue.empty():
+            time.sleep(0.5)
+        ingest_queue.put("END")
 
     print("\nTotal Inference Time: {} sec\n".format(time.time() - tot_inf_st_time))
 
