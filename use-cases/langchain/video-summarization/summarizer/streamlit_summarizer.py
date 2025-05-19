@@ -73,14 +73,16 @@ def post_request(input_data):
 
 def ingest_into_milvus(ingest_q):
     #while True:
-    while not stop_signal.is_set():
+    end_ingestion = False
+    while not stop_signal.is_set() and not end_ingestion:
         chunk_summaries = []
-        end_ingestion = False
+        #end_ingestion = False
         while not ingest_q.empty():
             item = ingest_q.get()
             if item == "END":
                 end_ingestion = True
                 ingest_q.task_done()
+                print(f"ingest_queue - END reached, task done")
                 break
             chunk_summaries.append(item)
 
@@ -283,8 +285,12 @@ def summarizer_main(args):
         for doc, is_last in tag_last(loader.lazy_load()):
             if stop_signal.is_set():
               print(f"summarizer_main - stop_signal received")
-              pool.shutdown(wait=True, cancel_futures=True)
+              milvus_future.cancel()
+              pool.shutdown(wait=True, cancel_futures=True)              
               return
+              
+            if is_last:
+              print(f"main - is_last: {is_last}")
               
               
             chunk_st_time = time.time()
@@ -312,7 +318,7 @@ def summarizer_main(args):
 
                 }
             )
-            #print(f"Milvus ingested chunk: {doc.metadata['chunk_id']}")
+            print(f"Milvus ingested chunk: {doc.metadata['start_time']}-{doc.metadata['end_time']}")
 
             call_merger = (doc.metadata['chunk_id']+1) % merge_cadence == 0
 
@@ -320,7 +326,7 @@ def summarizer_main(args):
                 continue
 
             if call_merger or (not call_merger and is_last):
-                print('\n\nSending Chunks to Merger!\n\n')
+                print(f'\n\nSending Chunks to Merger (cm: {call_merger})!\n\n')
 
                 # Create a dictionary without chunk_id for async_merge_chunks
                 chunk_summaries_no_id = {key: value["summary"] for key, value in chunk_summaries.items()}
@@ -350,8 +356,8 @@ def summarizer_main(args):
     for t in merge_threads:
         t.join()
 
-    while not ingest_queue.empty():
-        time.sleep(0.5)
+    #while not ingest_queue.empty():
+    #    time.sleep(0.5)
     ingest_queue.put("END")
 
     print("\nTotal Inference Time: {} sec\n".format(time.time() - tot_inf_st_time))

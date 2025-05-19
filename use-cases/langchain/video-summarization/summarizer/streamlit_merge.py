@@ -31,6 +31,9 @@ if 'vertex_summary' not in st.session_state:
 if 'summarization_started' not in st.session_state:
     st.session_state['summarization_started'] = False
     
+if 'load_id' not in st.session_state:
+  st.session_state['load_id'] = 0
+    
 def vlm_video_player(url_or_path, **kwargs):
   st.video(url_or_path, **kwargs)
 
@@ -94,6 +97,8 @@ st.logo(logo_path)
 
 footer = """<style>.footer {position: fixed; left: 0; bottom: 0; width: 100%;background-color:#000000;color: white;text-align: center;}</style><div class='footer'><p>Powered by Intel&copy; Core&trade; Processor Series 2 and Intel&copy; Arc&trade; B-Series GPU.</p></div>"""
 
+st.session_state['load_id']  += 1
+
 st.set_page_config(initial_sidebar_state='collapsed', layout="wide")
 
 st.title("🎥 Loss Prevention Video Summarization")
@@ -132,22 +137,26 @@ with left_col:
           st.warning("The video file cannot be found")
     start_button_pressed = st.button("Start Summarization", on_click=toggle_start_button, disabled=st.session_state['summarization_started'])
   
+css_tag = '{behavior: "smooth"}'
 
 with right_col:
     alert_placeholder = st.empty()
     st.markdown("### 🧠 Merged Summaries")
     merge_placeholder = st.empty()
+
     merge_placeholder.markdown(
         f"""
-        <div id="merge_scrollable" style='height:500px; overflow-y:auto;'>
+        <div id="merge_scrollable" style='height:500px; overflow-y:auto'>
             <pre>{st.session_state['merged_summary']}</pre>
         </div>
+        <!--<div id="end-of-chat-stream-merged"></div>        
         <script>
-            var container = document.getElementById('merge_scrollable');
-            if (container) {{
-                container.scrollTop = container.scrollHeight;
+            var dummy_merged={st.session_state['load_id']}
+            var container_merged = document.getElementById('end-of-chat-stream-merged');
+            if (container_merged && dummy_merged) {{
+                container_merged.scrollIntoView({css_tag});
             }}
-        </script>
+        </script>-->
         """,
         unsafe_allow_html=True
     )
@@ -156,15 +165,17 @@ with right_col:
     vertex_placeholder = st.empty()
     vertex_placeholder.markdown(
         f"""
-        <div id="vertex_scrollable" style='height:500px; overflow-y:auto;'>
+        <div id="vertex_scrollable" style='height:500px; overflow-y:auto'>
             <pre>{st.session_state['vertex_summary']}</pre>
         </div>
+        <!--<div id="end-of-chat-vertex"></div>
         <script>
-            var container = document.getElementById('vertex_scrollable');
-            if (container) {{
-                container.scrollTop = container.scrollHeight;
+            var dummy_vertex={st.session_state['load_id']}
+            var container_vertex = document.getElementById('end-of-chat-stream-vertex');
+            if (container_vertex && dummy_vertex) {{
+                container_vertex.scrollIntoView({css_tag});
             }}
-        </script>
+        </script>-->
         """,
         unsafe_allow_html=True
     )
@@ -177,20 +188,33 @@ with left_col:
     #     create_html_component(safe_text, 500),
     #     unsafe_allow_html=True
     # )
-    chunk_placeholder.markdown(
-        f"""
-        <div id="scrollable" style='height:500px; overflow-y:auto;'>
+    
+    #<div id="scrollable" style="height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+    #chunk_placeholder.markdown(
+    chunk_placeholder_text=f"""
+        <div id="scrollable_stream" style='height:500px; overflow-y:auto'>
             <pre>{st.session_state['streamed_text']}</pre>
         </div>
+        <!--<div id="end-of-chat-stream"></div>
         <script>
-            var container = document.getElementById('scrollable');
-            if (container) {{
-                container.scrollTop = container.scrollHeight;
+            var dummy_stream={st.session_state['load_id']}
+            var container_stream = document.getElementById('end-of-chat-stream-stream');
+            if (container_stream && dummy_stream) {{
+                container_stream.scrollIntoView({css_tag});
             }}
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+        </script>-->
+        <script>
+            // Automatically scroll to the bottom of the content
+            var scrollableDiv_stream = document.getElementById('scrollable_stream');
+            var dummy_stream={st.session_state['load_id']}
+            scrollableDiv_stream.scrollTop = scrollableDiv_stream.scrollHeight;
+        </script>        
+        """
+    #    unsafe_allow_html=True
+    #)
+    
+    # Inject the HTML and JavaScript
+    st.components.v1.html(chunk_placeholder_text, height=500)
 
 
 summarize_thread = None
@@ -321,13 +345,12 @@ while st.session_state['summarization_started'] and not stop_signal.is_set(): # 
                   f"""
                   <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
                       <div style="white-space: pre-wrap;flex-direction: column-reverse;">{safe_merged_text}</div>
-                  </div>
+                  </div>                  
+                  <script>
+                      var container = document.getElementById('vertex_scrollable');
+                      container.scrollTop = container.scrollHeight;
+                  </script>
                   """,
-                  #<script>
-                  #    var container = document.getElementById('merge_scrollable');
-                  #    container.scrollTop = -container.scrollHeight;
-                  #</script>
-                  #""",
                   unsafe_allow_html=True
               )
       except queue.Empty:
@@ -340,12 +363,12 @@ while st.session_state['summarization_started'] and not stop_signal.is_set(): # 
               safe_vertex_text = (st.session_state['vertex_summary'].replace('\n', '<br>').replace('[CLOUD SUMMARY ', '<br><strong>[CLOUD SUMMARY ').replace('sec]', 'sec]</strong>'))
               vertex_placeholder.markdown(
                   f"""
-                  <div id="merge_scrollable" style='height:400px; overflow-y:auto;'>
+                  <div id="vertex_scrollable" style='height:400px; overflow-y:auto;'>
                       <div style="white-space: pre-wrap;">{safe_vertex_text}</div>
                   </div>
                   <script>
-                      var container = document.getElementById('merge_scrollable');
-                      container.scrollTop = -container.scrollHeight;
+                      var container = document.getElementById('vertex_scrollable');
+                      container.scrollTop = container.scrollHeight;
                   </script>
                   """,
                   unsafe_allow_html=True
